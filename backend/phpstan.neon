@@ -1,0 +1,53 @@
+# Static analysis (T-06, TESTING §6).
+#
+# Larastan, which teaches PHPStan about Eloquent's magic - without it, every
+# `Model::where()` is an undefined method and the output is unusable.
+#
+# **Level 5 to start, deliberately.** Levels are cumulative and the top ones
+# demand generics on every collection and array shape; adopting level 9 on a
+# codebase this size produces thousands of findings, which get suppressed
+# wholesale and teach everybody that the tool is noise. Level 5 already catches
+# the class of bug worth catching: calls to methods that do not exist, wrong
+# argument types, and unreachable code.
+#
+# Raise it a level at a time once a level is clean and stays clean.
+
+includes:
+    - vendor/larastan/larastan/extension.neon
+    # 97 remaining findings, suppressed so CI enforces "no NEW errors" (T-63).
+    #
+    # Down from 280. The difference was one root cause: the models carried no
+    # `@property` or `@property-read` annotations, so the analyser read every
+    # cast attribute as a string and every relation as the base Model. Both are
+    # now generated from the real schema and from reflecting the relation
+    # methods, so they cannot drift from the code the way hand-written ones do.
+    #
+    # Two real findings came out of the exercise, and neither was baselined:
+    #   - `AuthService` called `env()` directly, which returns its default once
+    #     `config:cache` runs - a configured token lifetime silently reverted
+    #     to 30 days in production only.
+    #   - Two defensive `instanceof` branches were provably unreachable once
+    #     the casts were visible, and have been removed.
+    #
+    # What remains is mostly `?->` on values that cannot be null, and array
+    # shapes the analyser infers more narrowly than they are. One flagged
+    # branch in LeadImportService was verified as live by an existing test.
+    - phpstan-baseline.neon
+
+parameters:
+    level: 5
+
+    paths:
+        - app
+        - config
+        - database
+        - routes
+
+    # Tests are excluded for now: they lean on factory magic and PHPUnit
+    # attributes that need a lot of annotation to satisfy the analyser, and the
+    # value of analysing them is lower than the value of analysing the code they
+    # test. Worth revisiting once app/ is clean at a higher level.
+
+    # Bootstrap cache is generated, not written.
+    excludePaths:
+        - bootstrap/cache

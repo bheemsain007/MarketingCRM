@@ -1,0 +1,124 @@
+# Continuous integration (T-06, TESTING §6).
+#
+# Written before a git remote exists, deliberately. The gates below are the
+# ones TESTING §6 proposes, and having them ready means the first push runs
+# them rather than the pipeline being written months later against a codebase
+# that has already drifted.
+#
+# **MySQL 8.4, not MariaDB.** The local machine currently runs MariaDB 10.4
+# (T-48) and the suite passes there, but phpunit.xml targets MySQL on purpose:
+# the schema leans on FK RESTRICT, composite unique semantics and strict mode.
+# CI is the place that check actually gets made, so it pins the version the
+# project claims to support (T-02).
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests & quality gates
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: marketing_crm_test
+        ports:
+          - 3306:3306
+        # Without the health check the suite starts before MySQL accepts
+        # connections and fails for a reason that has nothing to do with the code.
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          # Pinned to the version in T-02. A newer PHP passing here would not
+          # tell us the deployment target passes.
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql, bcmath, intl
+          coverage: xdebug
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: backend/vendor
+          key: ${{ runner.os }}-composer-${{ hashFiles('backend/composer.lock') }}
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      # SEC-OPS-01. Runs before the tests: a known-vulnerable dependency is
+      # worth failing on whether or not the suite is green.
+      - name: Security advisories
+        run: composer audit
+
+      - name: Code style
+        run: ./vendor/bin/pint --test
+
+      # Baselined at 280 pre-existing findings, so this gate means "no NEW
+      # static-analysis errors" rather than "the codebase is clean". Burning
+      # the baseline down is T-63; the gate is what stops it growing.
+      - name: Static analysis
+        run: ./vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+
+      - name: Prepare environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      # The migration chain is a real risk area - 39 migrations with foreign
+      # keys - and a down() that does not work is only discovered when somebody
+      # needs it. Proving it both ways costs seconds here.
+      - name: Migration chain (up, down, up)
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: marketing_crm_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
+        run: |
+          php artisan migrate --force
+          php artisan migrate:reset --force
+          php artisan migrate --force
+
+      - name: Test suite
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: marketing_crm_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
+        run: php artisan test
+
+      # Reported, not enforced, until somebody agrees the floor. TESTING §6
+      # proposes 90% on app/Services/** and 70% overall; failing a build on a
+      # number nobody has signed off teaches people to disable the check.
+      - name: Coverage report
+        env:
+          DB_CONNECTION: mysql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: marketing_crm_test
+          DB_USERNAME: root
+          DB_PASSWORD: ''
+        run: php artisan test --coverage --min=0
+        continue-on-error: true

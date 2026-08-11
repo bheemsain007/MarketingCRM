@@ -1,0 +1,57 @@
+# ---------------------------------------------------------------------------
+# Secrets - never commit (SEC-CFG-02)
+# .env.example IS committed (with empty values); every other .env is not.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+auth.json
+*.pem
+*.key
+*.p12
+storage/*.key
+
+# ---------------------------------------------------------------------------
+# Dependencies / build output
+# ---------------------------------------------------------------------------
+/backend/vendor
+/backend/node_modules
+/backend/public/build
+/backend/public/hot
+/backend/public/storage
+/tools/composer.phar
+
+# ---------------------------------------------------------------------------
+# Runtime - logs, cache, uploads
+# Call recordings and imports contain PII and must never reach the repo
+# ---------------------------------------------------------------------------
+/backend/storage/app/private
+/backend/storage/app/recordings
+/backend/storage/app/imports
+# Reference/source material dropped in locally - includes an 860 MB recordings
+# archive. Bulk media and PII, and not something a source repo should carry.
+/docs2/
+/backend/storage/framework/cache
+/backend/storage/framework/sessions
+/backend/storage/framework/testing
+/backend/storage/framework/views
+/backend/storage/logs
+*.log
+/backend/.phpunit.result.cache
+/backend/.phpunit.cache
+
+# Local SQLite (project uses MySQL)
+*.sqlite
+*.sqlite-journal
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.idea/
+.vscode/
+.fleet/
+.nova/
+.zed/
+.DS_Store
+Thumbs.db
+desktop.ini
