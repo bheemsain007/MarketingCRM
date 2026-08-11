@@ -143,8 +143,23 @@ decrypt. Handled explicitly (SEC-CFG-06):
   throw, and overwriting it is exactly the recovery an operator reaches for. A recovery path must
   never depend on the thing that is broken.
 
-**Still needs confirming:** whether credentials in database backups is acceptable to you at all. If
-it is not, the alternative is `.env`-only, which costs the audit trail and the no-SSH rotation.
+### Decision (2026-08-12): keep the override layer, with an operational requirement
+
+Credentials stay in the database. The alternative, `.env`-only, costs the audit trail SEC-AUD-02
+requires and rotation without SSH, and buys less than it looks: `.env` lands in file backups the
+same way the database lands in database backups.
+
+**The requirement that makes it sound is operational, not architectural:**
+
+1. **Database backups and `.env` are never stored in the same place.** Same bucket, same archive,
+   same laptop — and `APP_KEY` sits beside the ciphertext it opens, which is no encryption at all.
+2. **`APP_KEY` is backed up separately, and kept.** Losing it does not lose the CRM, but it does
+   lose every stored credential — they degrade to config defaults (SEC-CFG-06) and must be re-entered.
+3. **Rotating `APP_KEY` means re-entering provider credentials.** Existing rows become unreadable
+   by design. Plan it as a maintenance task, not a config tweak.
+
+Revisit if the deployment target changes: on infrastructure with a real secrets manager, that is a
+better home than either `.env` or the database.
 
 ## 8. Data Protection & PII
 
