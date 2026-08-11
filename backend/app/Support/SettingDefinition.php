@@ -79,6 +79,18 @@ class SettingDefinition
             'bool' => ['nullable', 'boolean'],
             'time' => ['nullable', 'date_format:H:i'],
             'select' => ['nullable', 'string', 'in:'.implode(',', $this->options)],
+            /*
+             * A comma-separated subset of `options`, rejected at the boundary
+             * rather than absorbed. The matrix falls back to its built-in list
+             * when a value will not parse, so a typo here is safe - but it is
+             * safe by silently ignoring what was typed, and an operator who
+             * narrowed suppression by hand deserves to be told it did not take.
+             */
+            'channels' => [
+                'nullable',
+                'string',
+                'regex:/^\s*$|^\s*('.implode('|', $this->options).')(\s*,\s*('.implode('|', $this->options).'))*\s*$/',
+            ],
             'secret' => ['nullable', 'string', 'max:2000'],
             default => ['nullable', 'string', 'max:500'],
         };

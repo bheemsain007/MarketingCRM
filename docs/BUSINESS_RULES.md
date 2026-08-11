@@ -34,12 +34,28 @@ Suppression is **reason × channel**, not a single global flag — a wrong phone
 ### BR-DNC-03 — Suppression is checked at dispatch time, not audience-build time
 A lead suppressed *after* a campaign audience was built must still be blocked when its send job runs. The gate is called inside the per-recipient job, not only during audience selection.
 
-### BR-DNC-04 — Policy is configuration, not code *(partly honoured — T-65)*
+### BR-DNC-04 — Policy is configuration, not code *(honoured in part, by decision — T-65, 2026-08-12)*
 The reason × channel matrix above is stored as configuration/data. Changing whether "Not Interested" blocks manual human calls must not require a code change in any channel module.
 
-> **Status:** thresholds and windows are config; the matrix itself is a `match` in `DncReason`.
-> Closing this needs a decision, not just a refactor — see T-65. The absolute reasons should
-> arguably stay in code precisely *because* they must not be editable at runtime.
+> **Decision:** the matrix is split by what a reason *means*, not by convenience.
+>
+> | Reason | Editable at runtime? | Why |
+> |---|:--:|---|
+> | `Do Not Contact`, `Opted Out` | **No** | The person's own explicit instruction. Absolute, in code |
+> | `Not Interested`, `Wrong Number`, `Invalid Number`, `Bounced Email` | **Yes** | Our inference from an outcome — exactly what an operator should tune without a deploy |
+>
+> The rule as literally written would make **"stop contacting me" a toggle**: one settings write,
+> with no code review anywhere in the path, could restart the dialer on somebody who opted out.
+> The tunable half satisfies what BR-DNC-04 is *for* — policy changes without a deploy, including
+> the rule's own worked example of "Not Interested" and manual calls.
+>
+> `config/crm.php` holds the defaults, the `settings` table overrides them, and
+> `App\Services\Dnc\SuppressionMatrix` resolves the two. Absolute reasons are not offered by the
+> settings API at all, and the allowlist refuses their keys even if named directly.
+>
+> **Malformed overrides widen, never narrow.** An unknown channel discards the whole override and
+> falls back to the built-in list, logging loudly — falling back to the part that parsed would
+> silently unblock whichever channel was mistyped.
 
 ### BR-DNC-05 — Skips are logged, never silent
 Every suppressed contact attempt writes a skip record with lead, channel, reason, and campaign context. "Nothing happened" is never an acceptable outcome (FR-CAMP-03).

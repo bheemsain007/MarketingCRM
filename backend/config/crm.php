@@ -25,6 +25,37 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | DNC matrix (BR-DNC-02/04, T-65)
+    |--------------------------------------------------------------------------
+    | Which channels each suppression reason blocks, as a comma-separated list
+    | of Channel values. These are the DEFAULTS; the settings table may override
+    | them at runtime, which is what BR-DNC-04 asks for.
+    |
+    | Only reasons DncReason::isConfigurable() allows appear here. `Do Not
+    | Contact` and `Opted Out` are a person's explicit instruction, so they stay
+    | absolute in code where no settings write can narrow them - see
+    | App\Services\Dnc\SuppressionMatrix for the reasoning.
+    |
+    | An empty, missing or unparseable value falls back to the built-in list.
+    | Suppression never narrows by accident.
+    */
+    'dnc' => [
+        'matrix' => [
+            // Our inference from one call, not the lead's own instruction -
+            // which is exactly why it is tunable (BR-DNC-04's own example).
+            'not_interested' => 'call,ai_call,sms,whatsapp,rcs,voice,email',
+
+            // The phone is bad; the email address may be perfectly good.
+            'wrong_number' => 'call,ai_call,sms,whatsapp,rcs,voice',
+            'invalid_number' => 'call,ai_call,sms,whatsapp,rcs,voice',
+
+            // A hard bounce says nothing about the phone number.
+            'bounced_email' => 'email',
+        ],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Authentication (SEC-AUTH-*, T-10)
     |--------------------------------------------------------------------------
     | Personal access token lifetime for the Flutter app.

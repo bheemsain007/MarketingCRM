@@ -30,6 +30,8 @@ use Illuminate\Support\Facades\DB;
  */
 class DncService
 {
+    public function __construct(private readonly SuppressionMatrix $matrix) {}
+
     /**
      * Suppresses a lead, or returns the existing record if already suppressed
      * for the same reason and channel.
@@ -130,7 +132,7 @@ class DncService
         foreach ($this->activeEntriesFor($lead) as $entry) {
             $blocked = $entry->channel !== null
                 ? [$entry->channel]
-                : $entry->reason->blockedChannels();
+                : $this->matrix->blockedChannels($entry->reason);
 
             if (in_array($channel, $blocked, true)) {
                 return false;

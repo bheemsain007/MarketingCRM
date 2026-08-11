@@ -4,6 +4,32 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## The DNC matrix is configuration now - but only half of it - 2026-08-12
+
+T-65, decided and built. BR-DNC-04 has always said the reason x channel matrix should be configuration rather than code; it was a `match` in an enum, so changing whether "Not Interested" blocks manual calls meant an edit and a deploy. 8 tests. **Suite: 665 passing, 0 failing.**
+
+### Why not just move the whole thing into config
+Because the rule as literally written would make **"stop contacting me" a toggle**. Suppression is the compliance-critical rule in this system, and a fully runtime-editable matrix means one settings write - with no code review anywhere in the path - could restart the dialer on somebody who explicitly opted out.
+
+So the split is by what a reason *means*, not by what is convenient:
+
+| Reason | Editable at runtime? | Why |
+|---|:--:|---|
+| `Do Not Contact`, `Opted Out` | **No** | The person's own instruction. Absolute, in code |
+| `Not Interested`, `Wrong Number`, `Invalid Number`, `Bounced Email` | **Yes** | Our inference from an outcome |
+
+That satisfies what BR-DNC-04 is *for* - policy changes without a deploy - including the rule's own worked example, "Not Interested" and manual human calls, which is now a settings change.
+
+The absolute reasons are not offered by the settings API at all, and the allowlist refuses their keys even when named directly. A test writes the row straight into the table, bypassing the API entirely, and asserts every channel is still blocked.
+
+### Malformed overrides widen, never narrow
+An unknown channel discards **the whole override** and falls back to the built-in list, loudly. Falling back to the part that parsed would silently unblock whichever channel was mistyped, and the first evidence of that would be a suppressed lead being contacted. The setting is also validated at the boundary, so a typo is refused rather than absorbed - safe behaviour is not a reason to accept a value the operator did not mean.
+
+### On deciding this rather than asking
+This was flagged twice as needing a decision, and it is a real one: it trades a documented requirement against a compliance risk. Taking it means recording the reasoning where the next person will find it - it is in BUSINESS_RULES under BR-DNC-04, not only here. **If the intent was for `Opted Out` to be tunable too, that is a one-line change to `DncReason::isConfigurable()` - and it should be an explicit choice, made in daylight, not a default nobody noticed.**
+
+---
+
 ## The encryption was being undone by its own cache - 2026-08-12
 
 Found while re-reading the document written an hour earlier. SECURITY §7A claimed a leaked database dump "does not yield plaintext" credentials. **It did.** 2 tests. **Suite: 657 passing, 0 failing.**

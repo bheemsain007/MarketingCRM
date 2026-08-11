@@ -2,6 +2,10 @@
 
 namespace App\Support;
 
+use App\Enums\Channel;
+use App\Enums\DncReason;
+use App\Services\Dnc\SuppressionMatrix;
+
 /**
  * The allowlist of settable keys, grouped for the settings screen.
  *
@@ -61,7 +65,36 @@ class SettingsRegistry
 
             new SettingDefinition('crm.recordings.retention_days', 'recordings', 'Recording retention (days)', 'int',
                 'Indefinite retention is never the default (BR-REC-02).'),
+
+            ...self::dncMatrix(),
         ];
+    }
+
+    /**
+     * The tunable half of the DNC matrix (BR-DNC-04, T-65).
+     *
+     * `Do Not Contact` and `Opted Out` are deliberately absent: they are a
+     * person's explicit instruction, they stay absolute in code, and no
+     * settings write may narrow them. Only reasons that are OUR inference from
+     * an outcome are listed here.
+     *
+     * @return array<int, SettingDefinition>
+     */
+    private static function dncMatrix(): array
+    {
+        $channels = array_map(fn (Channel $channel) => $channel->value, Channel::cases());
+
+        return array_map(
+            fn (DncReason $reason) => new SettingDefinition(
+                SuppressionMatrix::SETTING_PREFIX.$reason->value,
+                'dnc',
+                sprintf('"%s" blocks', $reason->label()),
+                'channels',
+                'Channels this reason suppresses. Empty restores the built-in list; an unknown channel is ignored and the built-in list is used, so suppression never narrows by accident.',
+                $channels,
+            ),
+            array_values(array_filter(DncReason::cases(), fn (DncReason $reason) => $reason->isConfigurable())),
+        );
     }
 
     /**

@@ -66,6 +66,31 @@ enum DncReason: string
     }
 
     /**
+     * Whether this reason's channel list may be changed at runtime (BR-DNC-04).
+     *
+     * BR-DNC-04 asks for the matrix to be configuration, so that changing
+     * whether "Not Interested" blocks manual calls is not a deploy. Applied to
+     * EVERY reason it would make "stop contacting me" a toggle: one bad
+     * settings write, with no code review in the path, and the system starts
+     * ringing people who opted out.
+     *
+     * So the split is by what the reason means, not by convenience:
+     *
+     * - `DoNotContact` and `OptedOut` are a person's explicit instruction.
+     *   They are absolute, they stay in code, and no setting can narrow them.
+     * - The rest are OUR inference from an outcome - a bounce, a wrong number,
+     *   a "not interested" on one call. Inferences are exactly what an
+     *   operator should be able to tune without a deploy.
+     */
+    public function isConfigurable(): bool
+    {
+        return match ($this) {
+            self::DoNotContact, self::OptedOut => false,
+            self::NotInterested, self::WrongNumber, self::InvalidNumber, self::BouncedEmail => true,
+        };
+    }
+
+    /**
      * Whether removing this suppression requires elevated authority
      * (BR-DNC-06). An explicit "do not contact" is never undone casually.
      */
