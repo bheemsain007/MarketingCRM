@@ -99,6 +99,12 @@
     </a>
     @endpermission
 
+    @permission('reports.telecaller')
+    <a href="{{ route('web.reports.telecallers') }}" class="{{ request()->routeIs('web.reports.telecallers') ? 'active' : '' }}">
+        <i class="bi bi-people me-2"></i>Telecaller Reports
+    </a>
+    @endpermission
+
     @permission('users.view')
     <a href="{{ route('web.users') }}" class="{{ request()->routeIs('web.users') ? 'active' : '' }}">
         <i class="bi bi-person-gear me-2"></i>Users

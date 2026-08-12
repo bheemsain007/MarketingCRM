@@ -73,6 +73,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/reports', [PageController::class, 'reports'])
         ->middleware('permission:reports.business')->name('web.reports');
 
+    // The people view, gated on its own permission: reports.telecaller is who
+    // gets paid, reports.business is how the business is doing (Phase 26).
+    Route::get('/reports/telecallers', [PageController::class, 'telecallerReports'])
+        ->middleware('permission:reports.telecaller')->name('web.reports.telecallers');
+
     // `users.view` opens the page; the create form and the role control are
     // drawn only for those holding users.manage / roles.manage (SEC-AUTHZ-05).
     Route::get('/users', [PageController::class, 'users'])

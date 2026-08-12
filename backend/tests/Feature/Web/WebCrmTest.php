@@ -152,7 +152,7 @@ class WebCrmTest extends TestCase
     #[Test]
     public function every_page_requires_a_session(): void
     {
-        foreach (['/dashboard', '/leads', '/leads/create', '/assignments', '/account', '/dnc', '/settings', '/users', '/reports', '/products', '/imports'] as $path) {
+        foreach (['/dashboard', '/leads', '/leads/create', '/assignments', '/account', '/dnc', '/settings', '/users', '/reports', '/reports/telecallers', '/products', '/imports'] as $path) {
             $this->get($path)->assertRedirect('/login');
         }
     }
@@ -698,6 +698,69 @@ class WebCrmTest extends TestCase
             ->get('/dashboard')
             ->assertOk()
             ->assertDontSee('/reports"', false);
+    }
+
+    // -----------------------------------------------------------------------
+    // Telecaller reports (Phase 26, FR-RPT-01, T-24)
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function a_manager_can_open_the_telecaller_reports_page(): void
+    {
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get('/reports/telecallers')
+            ->assertOk()
+            ->assertSee('chart.js', false)
+            ->assertSee('Leaderboard');
+    }
+
+    #[Test]
+    public function the_telecaller_reports_page_names_the_attribution_model(): void
+    {
+        // On reassignment, attribution decides who is credited with a
+        // conversion and its revenue, and that affects pay (T-24). The page
+        // must state which model produced the numbers, not imply a single truth.
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get('/reports/telecallers')
+            ->assertOk()
+            ->assertSee('attribution model', false);
+    }
+
+    #[Test]
+    public function the_telecaller_reports_page_is_gated_separately_from_the_business_page(): void
+    {
+        // Accounts holds reports.business but not reports.telecaller: it may see
+        // how the business is doing, not how each person is paid. The split is
+        // the whole point of two permissions, so it is worth asserting both
+        // sides on one role.
+        $accounts = $this->user(RoleName::Accounts);
+
+        $this->actingAs($accounts)->get('/reports')->assertOk();
+        $this->actingAs($accounts)->get('/reports/telecallers')->assertStatus(403);
+    }
+
+    #[Test]
+    public function a_telecaller_cannot_open_the_telecaller_reports_page(): void
+    {
+        // A telecaller holds reports.view but not reports.telecaller - the
+        // leaderboard ranks their peers and is a supervisory view.
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/reports/telecallers')
+            ->assertStatus(403);
+    }
+
+    #[Test]
+    public function navigation_shows_telecaller_reports_only_to_those_who_may_see_them(): void
+    {
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('/reports/telecallers"', false);
+
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertDontSee('/reports/telecallers"', false);
     }
 
     // -----------------------------------------------------------------------

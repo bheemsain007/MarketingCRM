@@ -178,6 +178,23 @@ class PageController extends Controller
     }
 
     /**
+     * Telecaller performance dashboard (Phase 26, FR-RPT-01).
+     *
+     * The people view, gated separately from the money view: `reports.business`
+     * opens `/reports`, `reports.telecaller` opens this one, because who-gets-
+     * paid and how-the-business-is-doing are different questions asked by
+     * different roles. A shell like every other page - the figures come from
+     * `/api/v1/reports/telecallers`, so the leaderboard here cannot disagree
+     * with the API, and every rate is still drawn with its denominator
+     * (FR-RPT-06). The page also names the attribution model the API used,
+     * because on reassignment it changes who gets the credit (T-24).
+     */
+    public function telecallerReports(): View
+    {
+        return view('reports.telecallers');
+    }
+
+    /**
      * User administration (T-51, closes T-46).
      *
      * `canManageRoles` is passed because the screen needs to know whether to
