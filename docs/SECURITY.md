@@ -26,10 +26,10 @@ Controls carry stable IDs (`SEC-*`) so tests and reviews can cite them.
 |----|---------|
 | SEC-AUTH-01 | Laravel Sanctum: session cookies (Web CRM, same-origin) and personal access tokens (Flutter) |
 | SEC-AUTH-02 | Passwords hashed with bcrypt/argon2 via Laravel's hasher; never stored or logged reversibly |
-| SEC-AUTH-03 | Login throttling — 5 attempts/min per IP **and** per account; lockout is logged |
+| SEC-AUTH-03 | Login throttling — 5 attempts/min per IP **and** per account; lockout is logged. **Amended 2026-08-12:** password recovery uses its own limiter buckets rather than sharing login's. Per-account throttling means anyone who knows an address can fill that account's bucket; sharing one bucket with login turned that into a *total* lockout, with the escape hatch jammed by the same attack. The per-account key is also NFKC-normalised, because Unicode spellings of one address were each getting a fresh bucket |
 | SEC-AUTH-04 | Tokens are revocable per device; logout revokes the presenting token, not all sessions, unless "log out everywhere" is used |
 | SEC-AUTH-05 | Token expiry + refresh policy for the mobile app *(duration to confirm — proposed 30 days idle)* |
-| SEC-AUTH-06 | Password reset tokens are single-use and short-lived |
+| SEC-AUTH-06 | Password reset tokens are single-use and short-lived. **Built 2026-08-12.** Single-use is structural (the broker deletes the row as it consumes it); short-lived is 20 minutes, not Laravel's 60 (`AUTH_RESET_TOKEN_EXPIRE_MINUTES`). A reset also evicts everything the old password could reach: Sanctum tokens, the remember-me token, and the user's `sessions` rows — the last because a live session cookie authenticates without ever re-reading the password hash. Recovery is the only account-recovery path by design: no administrator screen sets another person's password, because whoever can do that can sign in as them |
 | SEC-AUTH-07 | 2FA for Admin/Super Admin *(proposed — confirm; recommended given the data sensitivity)* |
 
 ## 3. Authorization

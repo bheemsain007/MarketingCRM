@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Services\Settings\SettingsService;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -37,6 +38,23 @@ class AiCallTest extends TestCase
         parent::setUp();
         $this->seed(RolePermissionSeeder::class);
         Http::preventStrayRequests();
+
+        /*
+         * Frozen inside calling hours, as AutoDialerTest does.
+         *
+         * An AI call goes through the same BR-CALL-04 gate as a human one, so
+         * without this the suite passes during the working day and fails after
+         * 20:00 - which is exactly when someone runs it before going home, and
+         * exactly the kind of failure that gets dismissed as "flaky" rather
+         * than read.
+         */
+        Carbon::setTestNow(Carbon::parse('2026-08-10 11:00:00', 'Asia/Kolkata'));
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
     }
 
     private function actingAsRole(RoleName $role): User

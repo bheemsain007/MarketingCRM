@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Models\Concerns\HasRolesAndPermissions;
+use App\Notifications\QueuedResetPassword;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -118,5 +119,19 @@ class User extends Authenticatable
         return $this->assignedLeads()
             ->whereNotIn('status', ['converted', 'lost', 'not_interested'])
             ->count();
+    }
+
+    /**
+     * Sends the reset email off the request thread (SEC-AUTH-02, SEC-AUTH-06).
+     *
+     * Overridden so the mail does not happen inside the HTTP request. Only an
+     * address matching an active account ever gets this far, so a synchronous
+     * send made that branch measurably slower than the "no such user" branch -
+     * a timing oracle that answers "does this person have an account" without
+     * any credential.
+     */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new QueuedResetPassword($token));
     }
 }

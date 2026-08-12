@@ -3,6 +3,7 @@
 use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\LoginController;
 use App\Http\Controllers\Web\PageController;
+use App\Http\Controllers\Web\PasswordResetController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -26,6 +27,31 @@ Route::middleware('guest')->group(function () {
     Route::post('/login', [LoginController::class, 'store'])
         ->middleware('throttle:api-auth')
         ->name('web.login.attempt');
+
+    /*
+     * Password recovery (SEC-AUTH-06). The only account-recovery path there is:
+     * no administrator screen sets another person's password, because whoever
+     * can do that can sign in as them and every audit entry afterwards names
+     * the wrong human.
+     *
+     * Both POSTs are throttled - one mails a token and the other consumes one,
+     * and both are worth guessing at (SEC-AUTH-03). They use their OWN limiter
+     * rather than login's: per-account throttling means anyone who knows an
+     * address can fill that account's bucket, and sharing one bucket with login
+     * would turn that into a total lockout with the escape hatch jammed shut
+     * too.
+     */
+    Route::get('/forgot-password', [PasswordResetController::class, 'showRequestForm'])
+        ->name('web.password.request');
+    Route::post('/forgot-password', [PasswordResetController::class, 'sendResetLink'])
+        ->middleware('throttle:password-recovery')
+        ->name('web.password.email');
+
+    Route::get('/reset-password/{token}', [PasswordResetController::class, 'showResetForm'])
+        ->name('web.password.reset');
+    Route::post('/reset-password', [PasswordResetController::class, 'reset'])
+        ->middleware('throttle:password-recovery')
+        ->name('web.password.update');
 });
 
 Route::post('/logout', [LoginController::class, 'destroy'])

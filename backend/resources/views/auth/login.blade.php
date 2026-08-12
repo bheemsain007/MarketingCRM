@@ -49,6 +49,12 @@
 
                 <button type="submit" class="btn btn-primary w-100">Sign in</button>
             </form>
+
+            {{-- The only route back in for somebody who has forgotten their
+                 password: no administrator can set one for them (SEC-AUTH-06). --}}
+            <p class="text-center small mt-3 mb-0">
+                <a href="{{ route('web.password.request') }}" class="text-decoration-none">Forgotten your password?</a>
+            </p>
         </div>
     </div>
     <p class="text-center text-secondary small mt-3 mb-0">

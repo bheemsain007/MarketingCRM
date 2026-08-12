@@ -11,6 +11,10 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Str;
+use Throwable;
 
 /**
  * Authentication, session and audit (SEC-AUTH-*, SEC-AUD-02, FR-ATT-01).
@@ -231,6 +235,133 @@ class AuthService
     }
 
     /** @param array<string, mixed> $context */
+    /**
+     * Emails a password reset link (SEC-AUTH-06).
+     *
+     * Until this existed, a user who forgot their password was locked out
+     * permanently: there is no admin path to set somebody's password either,
+     * by design, because an administrator who can set a password can sign in
+     * as that person.
+     *
+     * **Nothing about the outcome is returned, deliberately.** The caller shows
+     * the same message whether the address matched an account, matched a
+     * disabled one, or matched nothing at all - the same refusal to answer
+     * "does this account exist" that login already makes (SEC-AUTH-02). A reset
+     * form that says "no such user" is a user-enumeration oracle that needs no
+     * password to operate.
+     *
+     * Disabled accounts are excluded by passing `is_active` as a credential, so
+     * the provider never finds them: a suspended user must not be able to let
+     * themselves back in.
+     */
+    public function sendPasswordResetLink(string $email, Request $request): void
+    {
+        try {
+            $status = Password::sendResetLink(['email' => $email, 'is_active' => true]);
+        } catch (Throwable $e) {
+            /*
+             * A mail transport that throws must not become an oracle.
+             *
+             * Only an address that MATCHED an active account ever reaches the
+             * send, so letting the exception escape produced a 500 for real
+             * users and a clean 302 for everyone else - which tells an attacker
+             * exactly what the identical flash message was written to hide.
+             * The failure is logged for whoever operates the mailer instead.
+             */
+            Log::error('Password reset mail failed', ['exception' => $e->getMessage()]);
+
+            $this->audit(null, 'password_reset_mail_failed', $request);
+
+            return;
+        }
+
+        // Audited either way. A burst of requests for addresses that do not
+        // exist is exactly what enumeration looks like, and it should be
+        // visible to whoever reads the log (SEC-AUD-02).
+        $this->audit(
+            User::where('email', $email)->value('id'),
+            $status === Password::RESET_LINK_SENT ? 'password_reset_requested' : 'password_reset_request_ignored',
+            $request,
+            ['email' => $email],
+        );
+    }
+
+    /**
+     * Completes a reset (SEC-AUTH-06).
+     *
+     * Single-use and short-lived are both structural rather than checked here:
+     * the broker deletes the token row as it consumes it, and refuses one older
+     * than `config('auth.passwords.users.expire')`. Neither property depends on
+     * this method remembering to enforce it.
+     *
+     * Everything else the account was signed in with is invalidated. A reset is
+     * usually a response to a password believed compromised, so leaving the
+     * attacker's existing session or mobile token alive would defeat the point
+     * - the same reasoning as `changePassword`, applied harder because here we
+     * cannot know the requester was ever legitimate.
+     *
+     * @param  array<string, string>  $credentials  email, password, password_confirmation, token
+     *
+     * @throws ApiException when the token is invalid, expired or already used
+     */
+    public function resetPassword(array $credentials, Request $request): void
+    {
+        /*
+         * `is_active` is re-asserted here, not only when the link was sent.
+         *
+         * The broker looks the user up again by these credentials, so without
+         * it a token issued while an account was live stays redeemable after
+         * the account is suspended - and suspending somebody is usually the
+         * response to needing them out NOW. The provider strips only keys
+         * containing "password", so this becomes a real WHERE clause.
+         */
+        $credentials['is_active'] = true;
+
+        $status = Password::reset($credentials, function (User $user, string $password) use ($request) {
+            DB::transaction(function () use ($user, $password, $request) {
+                $user->forceFill([
+                    'password' => Hash::make($password),
+                    // Invalidates every "remember me" cookie already issued.
+                    'remember_token' => Str::random(60),
+                ])->save();
+
+                // Every mobile token too - a reset must not leave a device
+                // signed in that the real owner cannot see or revoke.
+                $user->tokens()->delete();
+
+                /*
+                 * And every browser session. Revoking tokens and rotating the
+                 * remember_token is not enough on its own: the session driver
+                 * is `database`, and a live session cookie authenticates from
+                 * the `sessions` row alone without ever re-reading the password
+                 * hash. Leaving those rows behind means the person the reset
+                 * was meant to evict simply stays signed in (SEC-AUTH-04).
+                 */
+                if (config('session.driver') === 'database') {
+                    DB::table(config('session.table', 'sessions'))
+                        ->where('user_id', $user->id)
+                        ->delete();
+                }
+
+                $this->audit($user->id, 'password_reset_completed', $request);
+            });
+        });
+
+        if ($status !== Password::PASSWORD_RESET) {
+            $this->audit(null, 'password_reset_failed', $request, ['status' => $status]);
+
+            throw new ApiException(
+                ErrorCode::ValidationFailed,
+                'This reset link is invalid or has expired. Please request a new one.',
+                errors: [[
+                    'field' => 'email',
+                    'code' => ErrorCode::ValidationFailed->value,
+                    'message' => 'This reset link is invalid or has expired. Please request a new one.',
+                ]],
+            );
+        }
+    }
+
     private function audit(?int $userId, string $action, Request $request, array $context = []): void
     {
         AuditLog::create([

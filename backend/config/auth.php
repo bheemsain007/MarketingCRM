@@ -92,11 +92,39 @@ return [
     |
     */
 
+    /*
+     * Microseconds the password broker pads every sendResetLink() call to
+     * (SEC-AUTH-02).
+     *
+     * Laravel's 200ms default is BELOW the cost of one bcrypt at the 12 rounds
+     * this application uses (~260ms measured), and only the branch that found a
+     * live account pays that cost - so the default left a timing oracle that
+     * answers "does this address have an account" to anyone with a stopwatch.
+     * 600ms sits clear of it, so both branches take the same observable time.
+     *
+     * This is a floor, not a cap: it costs a legitimate reset half a second on
+     * an endpoint used a handful of times a year.
+     */
+    'timebox_duration' => (int) env('AUTH_TIMEBOX_MICROSECONDS', 600000),
+
     'passwords' => [
         'users' => [
             'provider' => 'users',
             'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
-            'expire' => 60,
+            /*
+             * Minutes. SEC-AUTH-06 asks for short-lived tokens, and Laravel's
+             * shipped default of 60 is longer than a reset needs: the link goes
+             * to an inbox that may itself be on a shared machine. 20 minutes is
+             * ample to read an email and choose a password, and it bounds how
+             * long a leaked link stays live. Tunable without a deploy.
+             *
+             * Named without the word PASSWORD on purpose: `.env.example` is
+             * checked by a test that treats any key matching PASSWORD/SECRET/
+             * API_KEY as a credential and fails if it carries a value
+             * (SEC-CFG-02). This is a duration, not a secret, and it should not
+             * have to weaken that check to be documented with its default.
+             */
+            'expire' => (int) env('AUTH_RESET_TOKEN_EXPIRE_MINUTES', 20),
             'throttle' => 60,
         ],
     ],
