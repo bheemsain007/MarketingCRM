@@ -93,6 +93,12 @@
     </a>
     @endpermission
 
+    @permission('payments.view')
+    <a href="{{ route('web.payments') }}" class="{{ request()->routeIs('web.payments') ? 'active' : '' }}">
+        <i class="bi bi-cash-coin me-2"></i>Payments
+    </a>
+    @endpermission
+
     @permission('reports.business')
     <a href="{{ route('web.reports') }}" class="{{ request()->routeIs('web.reports') ? 'active' : '' }}">
         <i class="bi bi-graph-up me-2"></i>Reports

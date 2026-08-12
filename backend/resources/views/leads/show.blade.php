@@ -360,6 +360,21 @@
                     @endpermission
 
                     <div id="deal-list"></div>
+
+                    {{--
+                        Sale and payment controls are drawn by JS into each deal,
+                        so the flags the page needs are declared once here.
+                        `canManage` opens deals and records sales; `canTakeMoney`
+                        is the Accounts power (payments.manage), which a
+                        telecaller does not hold; `canRefund` is separate again
+                        (SEC-AUTHZ-06).
+                    --}}
+                    <script>
+                        const canManageSales = @json(auth()->user()->hasPermission('sales.manage'));
+                        const canTakeMoney = @json(auth()->user()->hasPermission('payments.manage'));
+                        const canSeeMoney = @json(auth()->user()->hasPermission('payments.view'));
+                        const canApproveDiscount = @json(auth()->user()->hasPermission('discounts.approve'));
+                    </script>
                 </div>
                 @endpermission
 
@@ -767,25 +782,87 @@ $(function () {
             $('#deal-list').html(deals.map(function (d) {
                 const tone = d.status === 'won' ? 'success' : d.status === 'lost' ? 'dark' : 'primary';
 
-                return '<div class="border rounded p-3 mb-2">'
+                return '<div class="border rounded p-3 mb-2" data-deal="' + d.id + '">'
                     + '<div class="d-flex justify-content-between align-items-start">'
                     + '<div><span class="fw-semibold">' + CRM.escape(d.title) + '</span>'
                     + ' <span class="badge text-bg-' + tone + '">' + CRM.escape(d.status_label) + '</span>'
                     + '<div class="small text-muted">' + CRM.escape(d.currency) + ' ' + CRM.escape(d.value)
                     + (d.lost_reason_label ? ' · lost: ' + CRM.escape(d.lost_reason_label) : '')
                     + (d.sale ? ' · sale ' + CRM.escape(d.sale.reference) : '')
-                    + '</div></div>'
+                    + '</div>'
+                    + dealProducts(d)
+                    + '</div>'
                     + '<div>' + dealActions(d) + '</div>'
-                    + '</div></div>';
+                    + '</div>'
+                    + salePanel(d)
+                    + '</div>';
             }).join(''));
+
+            // Each won deal's money is a second call, so the deal list renders
+            // immediately rather than waiting on every sale's balance.
+            $('#deal-list [data-sale]').each(function () { loadPayments($(this)); });
         });
+    }
+
+    /* The lines the deal is made of (FR-SALE-02). Their sum IS the deal value -
+       the API owns that, so this only lists them. */
+    function dealProducts(d) {
+        const lines = d.products || [];
+
+        if (!lines.length) {
+            return d.status === 'open' && canManageSales
+                ? '<div class="small text-muted fst-italic">No products on this deal yet.</div>'
+                : '';
+        }
+
+        return '<ul class="small text-muted mb-0 mt-1 ps-3">'
+            + lines.map(function (p) {
+                return '<li>' + CRM.escape(p.name) + ' × ' + p.quantity
+                    + ' @ ' + CRM.escape(p.unit_price) + ' = ' + CRM.escape(p.line_total)
+                    + (d.status === 'open' && canManageSales
+                        ? ' <a href="#" class="deal-line-remove text-danger" data-deal="' + d.id
+                          + '" data-product="' + p.product_id + '">remove</a>'
+                        : '')
+                    + '</li>';
+            }).join('')
+            + '</ul>';
     }
 
     function dealActions(d) {
         if (d.status !== 'open') return '';
 
-        return '<a href="/api/v1/opportunities/' + d.id + '/quotations" class="d-none"></a>'
+        let html = '';
+
+        if (canManageSales) {
+            html += '<button class="btn btn-sm btn-outline-secondary me-1 deal-line-add" data-id="' + d.id + '">Add product</button>'
+                // BR-SALE-03: above the threshold a quotation needs Manager+
+                // approval before it can be issued, and the approver may not be
+                // the raiser - all enforced by the API.
+                + '<button class="btn btn-sm btn-outline-secondary me-1 deal-quote" data-id="' + d.id + '">Quotations</button>'
+                /* The control that makes Converted reachable at all. BR-STAT-05
+                   requires a sale before a lead may be marked Converted, and
+                   until this button existed there was no way to record one from
+                   the browser. */
+                + '<button class="btn btn-sm btn-success me-1 deal-sale" data-id="' + d.id + '">Record sale</button>';
+        }
+
+        return html
             + '<button class="btn btn-sm btn-outline-danger deal-lost" data-id="' + d.id + '">Mark lost</button>';
+    }
+
+    /* Money against a won deal (FR-PAY-01/03/04). Drawn only for those who may
+       see it - a telecaller holds sales.view but no payments permission. */
+    function salePanel(d) {
+        if (!d.sale || !canSeeMoney) return '';
+
+        return '<div class="mt-2 pt-2 border-top" data-sale="' + d.sale.id + '">'
+            + '<div class="small fw-semibold mb-1">Payments'
+            + ' <span class="text-muted fw-normal" data-balance>loading…</span></div>'
+            + '<div data-payments></div>'
+            + (canTakeMoney
+                ? '<button class="btn btn-sm btn-outline-primary mt-2 pay-add" data-sale="' + d.sale.id + '">Record payment</button>'
+                : '')
+            + '</div>';
     }
 
     $('#opp-create').on('click', function () {
@@ -799,6 +876,163 @@ $(function () {
                 loadDeals();
                 loadTimeline();
             })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    // ---- Product lines (FR-SALE-02) ------------------------------------
+    $('#deal-list').on('click', '.deal-line-add', function () {
+        const id = $(this).data('id');
+        const productId = window.prompt('Product ID to add:');
+        if (!productId) return;
+
+        const quantity = window.prompt('Quantity:', '1');
+        if (!quantity) return;
+
+        $.ajax({
+            url: '/api/v1/opportunities/' + id + '/products',
+            method: 'POST',
+            data: { product_id: productId, quantity: quantity, unit_price: window.prompt('Unit price (blank = list price):') || null },
+        })
+            .done(function () { CRM.alert('Product added.', 'success'); loadDeals(); })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    $('#deal-list').on('click', '.deal-line-remove', function (e) {
+        e.preventDefault();
+        const $a = $(this);
+
+        $.ajax({
+            url: '/api/v1/opportunities/' + $a.data('deal') + '/products/' + $a.data('product'),
+            method: 'DELETE',
+        })
+            .done(loadDeals)
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    // ---- Quotations (FR-SALE-03/04, BR-SALE-03) -------------------------
+    $('#deal-list').on('click', '.deal-quote', function () {
+        const id = $(this).data('id');
+
+        $.getJSON('/api/v1/opportunities/' + id + '/quotations').done(function (response) {
+            const quotes = response.data || [];
+
+            const lines = quotes.length
+                ? quotes.map(function (q) {
+                    return '#' + q.id + '  ' + q.status + '  ' + q.currency + ' ' + q.total
+                        + (q.discount_percent ? '  (-' + q.discount_percent + '%)' : '');
+                }).join('\n')
+                : '(none yet)';
+
+            if (! window.confirm('Quotations for this deal:\n\n' + lines + '\n\nRaise a new one?')) return;
+
+            const discount = window.prompt('Discount percent (0 for none):', '0');
+            if (discount === null) return;
+
+            $.ajax({
+                url: '/api/v1/opportunities/' + id + '/quotations',
+                method: 'POST',
+                data: { discount_percent: discount, valid_until: null },
+            })
+                .done(function (r) {
+                    /* Said out loud because it is the rule most likely to
+                       surprise: past the threshold the quotation cannot be
+                       issued until a Manager+ who did NOT raise it approves. */
+                    CRM.alert(r.message || 'Quotation raised.', 'success');
+                })
+                .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+        }).fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    // ---- Record a sale (BR-STAT-05) ------------------------------------
+    $('#deal-list').on('click', '.deal-sale', function () {
+        const id = $(this).data('id');
+
+        /* Amount is optional: the API falls back to the deal's own value, which
+           is the sum of its lines. Asking anyway, because a negotiated final
+           figure is common and retyping it is cheaper than editing a sale. */
+        const amount = window.prompt('Sale amount (blank = the deal value):');
+        if (amount === null) return;
+
+        $.ajax({
+            url: '/api/v1/opportunities/' + id + '/sale',
+            method: 'POST',
+            data: { amount: amount || null, notes: window.prompt('Notes (optional):') || null },
+        })
+            .done(function (r) {
+                // The lead can now be marked Converted - which was unreachable
+                // from this screen until the sale existed (BR-STAT-05).
+                CRM.alert(r.message || 'Sale recorded.', 'success');
+                loadDeals();
+                loadTimeline();
+
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    // ---- Payments (FR-PAY-01/03/04) -------------------------------------
+    function loadPayments($panel) {
+        const saleId = $panel.data('sale');
+
+        $.getJSON('/api/v1/sales/' + saleId + '/payments').done(function (response) {
+            const d = response.data;
+
+            // The balance is derived by the API, never stored (BR-PAY-04) - it
+            // is the number an argument with a customer turns on.
+            $panel.find('[data-balance]').text(
+                '· collected ' + d.collected + ' of ' + d.sale.amount + ' · balance ' + d.balance
+            );
+
+            const rows = (d.payments || []).map(function (p) {
+                return '<div class="small d-flex justify-content-between border-top py-1">'
+                    + '<span>' + CRM.escape(p.reference) + ' · ' + CRM.escape(p.amount)
+                    + ' · <span class="text-muted">' + CRM.escape(p.method || '—') + '</span></span>'
+                    + '<span><span class="badge text-bg-secondary">' + CRM.escape(p.status) + '</span>'
+                    + (canTakeMoney ? ' <a href="#" class="pay-move" data-id="' + p.id + '">change</a>' : '')
+                    + '</span></div>';
+            }).join('');
+
+            $panel.find('[data-payments]').html(rows || '<p class="small text-muted mb-0">Nothing collected yet.</p>');
+        });
+    }
+
+    $('#deal-list').on('click', '.pay-add', function () {
+        const $panel = $(this).closest('[data-sale]');
+        const amount = window.prompt('Amount received:');
+        if (!amount) return;
+
+        $.ajax({
+            url: '/api/v1/sales/' + $panel.data('sale') + '/payments',
+            method: 'POST',
+            data: {
+                amount: amount,
+                method: window.prompt('Method: cash, bank_transfer, upi, card, cheque, other', 'upi') || null,
+                // BR-PAY-03: a payment names one product. The API fills it in
+                // for a single-product sale, so blank is usually right (T-58).
+                product_id: window.prompt('Product ID (blank if the sale has one product):') || null,
+            },
+        })
+            .done(function (r) {
+                CRM.alert(r.message || 'Payment recorded.', 'success');
+                loadDeals();
+
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    $('#deal-list').on('click', '.pay-move', function (e) {
+        e.preventDefault();
+
+        // The API enforces the BR-PAY-02 matrix; offering the values it accepts
+        // rather than free text keeps the prompt honest.
+        const status = window.prompt('New status: pending, partial, paid, failed, overdue, refund', 'paid');
+        if (!status) return;
+
+        $.ajax({
+            url: '/api/v1/payments/' + $(this).data('id'),
+            method: 'PATCH',
+            data: { status: status, reason: window.prompt('Reason (required for a refund):') || null },
+        })
+            .done(function () { loadDeals(); })
             .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
     });
 

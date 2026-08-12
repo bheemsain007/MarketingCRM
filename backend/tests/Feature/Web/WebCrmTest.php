@@ -152,7 +152,7 @@ class WebCrmTest extends TestCase
     #[Test]
     public function every_page_requires_a_session(): void
     {
-        foreach (['/dashboard', '/leads', '/leads/create', '/assignments', '/account', '/dnc', '/settings', '/users', '/reports', '/reports/telecallers', '/products', '/imports'] as $path) {
+        foreach (['/dashboard', '/leads', '/leads/create', '/assignments', '/account', '/dnc', '/settings', '/users', '/reports', '/reports/telecallers', '/payments', '/products', '/imports'] as $path) {
             $this->get($path)->assertRedirect('/login');
         }
     }
@@ -698,6 +698,103 @@ class WebCrmTest extends TestCase
             ->get('/dashboard')
             ->assertOk()
             ->assertDontSee('/reports"', false);
+    }
+
+    // -----------------------------------------------------------------------
+    // Sales and payments UI (Phase 22/23, ROLE-05, BR-STAT-05)
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function the_accounts_role_finally_has_a_screen_for_its_job(): void
+    {
+        // ROLE-05 holds payments.view/manage/refund, and until this page
+        // existed nothing in the browser used any of them - somebody whose
+        // whole job is money signed in to a lead list and no way to do it.
+        $this->actingAs($this->user(RoleName::Accounts))
+            ->get('/payments')
+            ->assertOk()
+            ->assertSee('Payments')
+            ->assertSee('const canManage = true', false)
+            ->assertSee('const canRefund = true', false);
+    }
+
+    #[Test]
+    public function a_role_without_payments_view_cannot_open_the_payments_page(): void
+    {
+        // A telecaller holds no payments permission at all.
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/payments')
+            ->assertStatus(403);
+    }
+
+    #[Test]
+    public function the_payments_page_hides_write_controls_from_a_read_only_viewer(): void
+    {
+        // Viewer holds payments.view but neither manage nor refund, so the
+        // page is fully readable with no control that would only ever 403.
+        $this->actingAs($this->user(RoleName::Viewer))
+            ->get('/payments')
+            ->assertOk()
+            ->assertSee('const canManage = false', false)
+            ->assertSee('const canRefund = false', false);
+    }
+
+    #[Test]
+    public function navigation_shows_payments_only_to_those_who_may_see_them(): void
+    {
+        $this->actingAs($this->user(RoleName::Accounts))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('/payments"', false);
+
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertDontSee('/payments"', false);
+    }
+
+    #[Test]
+    public function the_deals_tab_can_record_a_sale_which_is_what_unblocks_converted(): void
+    {
+        $lead = Lead::factory()->create();
+
+        // BR-STAT-05 requires a sale before a lead may be marked Converted.
+        // Phase 22 unblocked that status, but with no record-sale control the
+        // browser could never actually reach it.
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get("/leads/{$lead->id}")
+            ->assertOk()
+            ->assertSee('deal-sale', false)
+            ->assertSee('Record sale');
+    }
+
+    #[Test]
+    public function the_deals_tab_offers_product_lines_and_quotations_to_those_who_may_sell(): void
+    {
+        $lead = Lead::factory()->create();
+
+        // FR-SALE-02 and FR-SALE-03/04 - both had endpoints and no UI.
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get("/leads/{$lead->id}")
+            ->assertOk()
+            ->assertSee('deal-line-add', false)
+            ->assertSee('deal-quote', false);
+    }
+
+    #[Test]
+    public function a_telecaller_sees_deals_but_is_offered_no_sale_or_money_controls(): void
+    {
+        $telecaller = $this->user(RoleName::Telecaller);
+        $lead = Lead::factory()->create(['assigned_to' => $telecaller->id]);
+
+        // A telecaller holds sales.view but not sales.manage, and no payments
+        // permission at all - so they can read the deal and nothing more.
+        $this->actingAs($telecaller)
+            ->get("/leads/{$lead->id}")
+            ->assertOk()
+            ->assertSee('const canManageSales = false', false)
+            ->assertSee('const canTakeMoney = false', false)
+            ->assertSee('const canSeeMoney = false', false);
     }
 
     // -----------------------------------------------------------------------

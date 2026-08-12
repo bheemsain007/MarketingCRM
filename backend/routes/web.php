@@ -118,6 +118,12 @@ Route::middleware('auth')->group(function () {
     Route::get('/products', [PageController::class, 'products'])
         ->middleware('permission:products.view')->name('web.products');
 
+    // The Accounts role's screen (ROLE-05). `payments.view` opens it; the
+    // record and refund controls are drawn only for those who hold the
+    // corresponding powers.
+    Route::get('/payments', [PageController::class, 'payments'])
+        ->middleware('permission:payments.view')->name('web.payments');
+
     Route::get('/imports', [PageController::class, 'imports'])
         ->middleware('permission:leads.import')->name('web.imports');
 });

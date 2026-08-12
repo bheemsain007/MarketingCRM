@@ -195,6 +195,26 @@ class PageController extends Controller
     }
 
     /**
+     * Payments (Phase 23, FR-PAY-01/03/04, ROLE-05).
+     *
+     * The Accounts role's screen, and until this existed it had none: that role
+     * holds `payments.view/manage/refund` and nothing in the browser used any
+     * of them, so somebody whose whole job is money signed in to a dashboard,
+     * a lead list and no way to do it.
+     *
+     * `canManage` and `canRefund` are passed separately because they are
+     * different powers - a refund moves money back out and is deliberately its
+     * own permission (SEC-AUTHZ-06).
+     */
+    public function payments(Request $request): View
+    {
+        return view('payments.index', [
+            'canManage' => $request->user()->hasPermission(Permission::PaymentsManage),
+            'canRefund' => $request->user()->hasPermission(Permission::PaymentsRefund),
+        ]);
+    }
+
+    /**
      * User administration (T-51, closes T-46).
      *
      * `canManageRoles` is passed because the screen needs to know whether to
