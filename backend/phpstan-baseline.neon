@@ -1,44 +1,8 @@
 parameters:
 	ignoreErrors:
 		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadTemperature\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 2
-			path: app/Console/Commands/DecayLeadScoresCommand.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>name" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Console/Commands/MarkOverduePaymentsCommand.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Console/Commands/ProcessFollowUpsCommand.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>name" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Console/Commands/ProcessFollowUpsCommand.php
-
-		-
 			message: '#^Cannot call method toIso8601String\(\) on string\.$#'
 			identifier: method.nonObject
-			count: 1
-			path: app/Http/Controllers/Api/V1/InterestController.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Controllers/Api/V1/InterestController.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadTemperature\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
 			count: 1
 			path: app/Http/Controllers/Api/V1/InterestController.php
 
@@ -163,12 +127,6 @@ parameters:
 			path: app/Http/Controllers/Api/V1/MessageController.php
 
 		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Controllers/Api/V1/OpportunityController.php
-
-		-
 			message: '#^Parameter \#1 \$callback of method Illuminate\\Database\\Eloquent\\Collection\<int,Illuminate\\Database\\Eloquent\\Model\>\:\:map\(\) expects callable\(Illuminate\\Database\\Eloquent\\Model, int\)\: array\<string, mixed\>, Closure\(App\\Models\\Quotation\)\: array\<string, mixed\> given\.$#'
 			identifier: argument.type
 			count: 1
@@ -181,50 +139,8 @@ parameters:
 			path: app/Http/Resources/DialerSessionResource.php
 
 		-
-			message: '#^Expression on left side of \?\? is not nullable\.$#'
-			identifier: nullCoalesce.expr
-			count: 2
-			path: app/Http/Resources/DncEntryResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type App\\Enums\\DncReason\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 3
-			path: app/Http/Resources/DncEntryResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\DncReason\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/DncEntryResource.php
-
-		-
 			message: '#^Strict comparison using \!\=\= between Illuminate\\Support\\Carbon and null will always evaluate to true\.$#'
 			identifier: notIdentical.alwaysTrue
-			count: 1
-			path: app/Http/Resources/FollowUpResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type App\\Enums\\FollowUpStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/FollowUpResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/FollowUpResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\Channel\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/FollowUpResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\FollowUpStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
 			count: 1
 			path: app/Http/Resources/FollowUpResource.php
 
@@ -235,82 +151,10 @@ parameters:
 			path: app/Http/Resources/LeadImportResource.php
 
 		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadProductResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadTemperature\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadProductResource.php
-
-		-
 			message: '#^Cannot call method toIso8601String\(\) on string\.$#'
 			identifier: method.nonObject
 			count: 3
 			path: app/Http/Resources/LeadResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type App\\Enums\\LeadStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\LeadTemperature\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/LeadStatusHistoryResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type App\\Enums\\Channel\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/MessageResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\Channel\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/MessageResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type App\\Enums\\OpportunityStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/OpportunityResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/OpportunityResource.php
-
-		-
-			message: '#^Using nullsafe property access on non\-nullable type App\\Enums\\OpportunityStatus\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Http/Resources/OpportunityResource.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
-			count: 1
-			path: app/Models/FollowUp.php
 
 		-
 			message: '#^Cannot call method diffInDays\(\) on string\.$#'
@@ -369,12 +213,6 @@ parameters:
 		-
 			message: '#^Expression on left side of \?\? is not nullable\.$#'
 			identifier: nullCoalesce.expr
-			count: 1
-			path: app/Services/FollowUps/FollowUpService.php
-
-		-
-			message: '#^Using nullsafe method call on non\-nullable type Illuminate\\Support\\Carbon\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
 			count: 1
 			path: app/Services/FollowUps/FollowUpService.php
 
@@ -465,12 +303,6 @@ parameters:
 		-
 			message: '#^Access to an undefined property Illuminate\\Database\\Eloquent\\Model\:\:\$unit_price\.$#'
 			identifier: property.notFound
-			count: 1
-			path: app/Services/Sales/QuotationService.php
-
-		-
-			message: '#^Using nullsafe property access "\?\-\>name" on left side of \?\? is unnecessary\. Use \-\> instead\.$#'
-			identifier: nullsafe.neverNull
 			count: 1
 			path: app/Services/Sales/QuotationService.php
 

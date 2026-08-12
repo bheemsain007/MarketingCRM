@@ -70,7 +70,7 @@ class QuotationService
             foreach ($opportunity->products()->with('product')->get() as $line) {
                 $quotation->items()->create([
                     'product_id' => $line->product_id,
-                    'description' => $line->product?->name ?? 'Product',
+                    'description' => $line->product->name ?? 'Product',
                     'quantity' => $line->quantity,
                     'unit_price' => $line->unit_price,
                     'line_total' => $line->line_total,

@@ -27,8 +27,8 @@ class DncEntryResource extends JsonResource
             'phone' => $this->phone_e164,
             'email' => $this->email,
 
-            'reason' => $this->reason?->value,
-            'reason_label' => $this->reason?->label(),
+            'reason' => $this->reason->value,
+            'reason_label' => $this->reason->label(),
 
             // null means every channel this REASON blocks (BR-DNC-02) - which
             // is not the same as "everything", so the client must not render a
@@ -37,7 +37,7 @@ class DncEntryResource extends JsonResource
             'channel_label' => $this->channel?->label(),
             'blocked_channels' => collect($this->channel !== null
                 ? [$this->channel]
-                : ($this->reason?->blockedChannels() ?? []))
+                : $this->reason->blockedChannels())
                 ->map(fn ($channel) => $channel->value)
                 ->values(),
 
@@ -48,7 +48,7 @@ class DncEntryResource extends JsonResource
 
             // Surfaced so the UI can warn before lifting an explicit refusal.
             // It is NOT an authority check - see T-50.
-            'requires_elevated_removal' => $this->reason?->requiresElevatedRemoval() ?? false,
+            'requires_elevated_removal' => $this->reason->requiresElevatedRemoval(),
 
             'created_by' => $this->whenLoaded('createdBy', fn () => $this->createdBy?->only(['id', 'name'])),
             'created_at' => $this->created_at?->toIso8601String(),

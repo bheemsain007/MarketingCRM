@@ -26,8 +26,8 @@ class LeadProductResource extends JsonResource
             ]),
             // Independent of the lead-level status - a lead may be negotiating
             // one product while uninterested in another.
-            'interest_status' => $this->interest_status?->value,
-            'temperature' => $this->temperature?->value,
+            'interest_status' => $this->interest_status->value,
+            'temperature' => $this->temperature->value,
             'score' => $this->score,
             'quoted_value' => $this->quoted_value,
             'currency' => $this->currency,

@@ -246,7 +246,7 @@ class FollowUpService
         }
 
         $this->notifications->notify($owner, $type, $title, [
-            'body' => 'Due '.$followUp->scheduled_at?->format('d M Y H:i'),
+            'body' => 'Due '.$followUp->scheduled_at->format('d M Y H:i'),
             'reference' => $followUp,
             'action_url' => '/leads/'.$followUp->lead_id,
         ]);

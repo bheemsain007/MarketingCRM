@@ -65,7 +65,7 @@ class MarkOverduePaymentsCommand extends Command
                 $notifications->notify(
                     $owner,
                     'payment_overdue',
-                    'Payment overdue: '.($payment->customer?->name ?? 'customer'),
+                    'Payment overdue: '.($payment->customer->name ?? 'customer'),
                     [
                         'body' => sprintf('%s %s was due on %s.',
                             $payment->currency,

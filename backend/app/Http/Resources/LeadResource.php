@@ -31,9 +31,9 @@ class LeadResource extends JsonResource
             'country' => $this->country,
             'timezone' => $this->timezone,
 
-            'status' => $this->status?->value,
-            'status_label' => $this->status?->label(),
-            'temperature' => $this->temperature?->value,
+            'status' => $this->status->value,
+            'status_label' => $this->status->label(),
+            'temperature' => $this->temperature->value,
             'score' => $this->score,
             'priority' => $this->priority,
 

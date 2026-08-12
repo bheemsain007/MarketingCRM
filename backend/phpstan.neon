@@ -14,9 +14,17 @@
 
 includes:
     - vendor/larastan/larastan/extension.neon
-    # 97 remaining findings, suppressed so CI enforces "no NEW errors" (T-63).
+    # 65 remaining findings, suppressed so CI enforces "no NEW errors" (T-63).
     #
-    # Down from 280. The difference was one root cause: the models carried no
+    # Down from 280, then 97. The 2026-08-12 pass removed 28 baseline entries -
+    # every `?->` the analyser could prove was on a non-nullable value (enums,
+    # NOT NULL Carbon columns), verified against the schema and the test suite.
+    # One was deliberately kept: `AuthService::logout()` calls
+    # `currentAccessToken()?->delete()`, and Sanctum's annotation claims that is
+    # non-nullable when in fact it returns null on the session/web logout path -
+    # the nullsafe there is correct and the annotation is the thing that is wrong.
+    #
+    # The original reduction from 280 came from one root cause: the models carried no
     # `@property` or `@property-read` annotations, so the analyser read every
     # cast attribute as a string and every relation as the base Model. Both are
     # now generated from the real schema and from reflecting the relation

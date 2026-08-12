@@ -166,7 +166,7 @@ class OpportunityController extends Controller
             'amount' => $sale->amount,
             'currency' => $sale->currency,
             'customer' => $sale->customer?->only(['id', 'name']),
-            'sold_at' => $sale->sold_at?->toIso8601String(),
+            'sold_at' => $sale->sold_at->toIso8601String(),
         ], 'Sale recorded. The lead can now be marked converted.');
     }
 

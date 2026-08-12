@@ -27,12 +27,12 @@ class FollowUpResource extends JsonResource
             'lead' => $this->whenLoaded('lead', fn () => $this->lead?->only(['id', 'name'])),
             'product' => $this->whenLoaded('product', fn () => $this->product?->only(['id', 'name'])),
 
-            'channel' => $this->channel?->value,
+            'channel' => $this->channel->value,
             'subject' => $this->subject,
             'notes' => $this->notes,
 
-            'status' => $status?->value,
-            'status_label' => $status?->label(),
+            'status' => $status->value,
+            'status_label' => $status->label(),
 
             // Derived rather than stored: a follow-up becomes overdue by the
             // passage of time, and a stored flag would be wrong between ticks
@@ -41,7 +41,7 @@ class FollowUpResource extends JsonResource
                 && $this->scheduled_at !== null
                 && $this->scheduled_at->isPast(),
 
-            'scheduled_at' => $this->scheduled_at?->toIso8601String(),
+            'scheduled_at' => $this->scheduled_at->toIso8601String(),
             'assigned_to' => $this->whenLoaded('assignee', fn () => $this->assignee?->only(['id', 'name'])),
 
             'completed_at' => $this->completed_at?->toIso8601String(),

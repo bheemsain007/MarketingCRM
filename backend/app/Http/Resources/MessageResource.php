@@ -19,8 +19,8 @@ class MessageResource extends JsonResource
             'lead_id' => $this->lead_id,
             'campaign_id' => $this->campaign_id,
 
-            'channel' => $this->channel?->value,
-            'channel_label' => $this->channel?->label(),
+            'channel' => $this->channel->value,
+            'channel_label' => $this->channel->label(),
             'direction' => $this->direction,
 
             'recipient' => $this->recipient,

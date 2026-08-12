@@ -100,6 +100,6 @@ class FollowUp extends Model
     /** Past due and never completed (BR-FUP-02). */
     public function isMissed(): bool
     {
-        return $this->status === FollowUpStatus::Open && $this->scheduled_at?->isPast();
+        return $this->status === FollowUpStatus::Open && $this->scheduled_at->isPast();
     }
 }

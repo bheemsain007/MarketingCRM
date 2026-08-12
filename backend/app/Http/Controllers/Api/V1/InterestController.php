@@ -64,9 +64,9 @@ class InterestController extends Controller
             ],
             'lead' => [
                 'id' => $fresh->id,
-                'status' => $fresh->status?->value,
+                'status' => $fresh->status->value,
                 'score' => $fresh->score,
-                'temperature' => $fresh->temperature?->value,
+                'temperature' => $fresh->temperature->value,
             ],
         ], 'Signal recorded.');
     }

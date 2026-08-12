@@ -39,7 +39,7 @@ class DecayLeadScoresCommand extends Command
                 foreach ($leads as $lead) {
                     $seen++;
 
-                    $before = [$lead->score, $lead->temperature?->value];
+                    $before = [$lead->score, $lead->temperature->value];
 
                     if ($dryRun) {
                         continue;
@@ -47,7 +47,7 @@ class DecayLeadScoresCommand extends Command
 
                     $after = $engine->recalculate($lead);
 
-                    if ([$after->score, $after->temperature?->value] !== $before) {
+                    if ([$after->score, $after->temperature->value] !== $before) {
                         $changed++;
                     }
                 }

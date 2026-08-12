@@ -21,8 +21,8 @@ class OpportunityResource extends JsonResource
             'customer_id' => $this->customer_id,
 
             'title' => $this->title,
-            'status' => $this->status?->value,
-            'status_label' => $this->status?->label(),
+            'status' => $this->status->value,
+            'status_label' => $this->status->label(),
 
             // Always the sum of the lines - never set directly by a caller.
             'value' => $this->value,
@@ -49,7 +49,7 @@ class OpportunityResource extends JsonResource
                 'id' => $this->sale->id,
                 'reference' => $this->sale->reference,
                 'amount' => $this->sale->amount,
-                'sold_at' => $this->sale->sold_at?->toIso8601String(),
+                'sold_at' => $this->sale->sold_at->toIso8601String(),
             ] : null),
 
             'created_at' => $this->created_at?->toIso8601String(),

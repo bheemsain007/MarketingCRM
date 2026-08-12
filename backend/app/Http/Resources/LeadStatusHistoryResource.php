@@ -41,7 +41,7 @@ class LeadStatusHistoryResource extends JsonResource
                 'name' => $this->changedBy->name,
             ] : null),
 
-            'created_at' => $this->created_at?->toIso8601String(),
+            'created_at' => $this->created_at->toIso8601String(),
         ];
     }
 }

@@ -73,9 +73,9 @@ class ProcessFollowUpsCommand extends Command
                 $notifications->notify(
                     $owner,
                     'follow_up_due',
-                    'Follow-up due: '.($followUp->lead?->name ?? 'lead'),
+                    'Follow-up due: '.($followUp->lead->name ?? 'lead'),
                     [
-                        'body' => 'Scheduled for '.$followUp->scheduled_at?->format('d M Y H:i'),
+                        'body' => 'Scheduled for '.$followUp->scheduled_at->format('d M Y H:i'),
                         'reference' => $followUp,
                         'action_url' => '/leads/'.$followUp->lead_id,
                     ],
