@@ -66,6 +66,11 @@ class SettingsRegistry
             new SettingDefinition('crm.recordings.retention_days', 'recordings', 'Recording retention (days)', 'int',
                 'Indefinite retention is never the default (BR-REC-02).'),
 
+            new SettingDefinition('crm.attribution.model', 'reporting', 'Conversion attribution', 'select',
+                'Who is credited when a lead changed hands (GLOSSARY 2.6). This decides what people '
+                .'are paid - confirm before it drives commission (T-24).',
+                ['last_owner', 'first_interest']),
+
             ...self::dncMatrix(),
         ];
     }

@@ -25,6 +25,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Attribution (GLOSSARY §2.6, T-24)
+    |--------------------------------------------------------------------------
+    | Who gets credit for a conversion when a lead changed hands.
+    |
+    |   last_owner  - whoever owned the lead when it converted (default)
+    |   first_interest - whoever first moved it to Interested
+    |
+    | `last_owner` is the option GLOSSARY proposes and matches how most
+    | incentive schemes already work. It is a DEFAULT, not a ruling: this
+    | decides what people are paid, so confirm it before it drives commission
+    | (T-24). Switching is a settings change, not a deploy.
+    |
+    | The split model (option C) is deliberately not implemented. It needs a
+    | weighting rule nobody has specified, and guessing one would produce
+    | numbers that look authoritative and are not.
+    */
+    'attribution' => [
+        'model' => env('ATTRIBUTION_MODEL', 'last_owner'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | DNC matrix (BR-DNC-02/04, T-65)
     |--------------------------------------------------------------------------
     | Which channels each suppression reason blocks, as a comma-separated list

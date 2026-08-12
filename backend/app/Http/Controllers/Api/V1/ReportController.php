@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\Reports\BusinessReportService;
+use App\Services\Reports\TelecallerReportService;
 use App\Support\ApiResponse;
 use App\Support\Reporting\ReportPeriod;
 use Illuminate\Http\JsonResponse;
@@ -22,7 +23,26 @@ use Illuminate\Http\Request;
  */
 class ReportController extends Controller
 {
-    public function __construct(private readonly BusinessReportService $reports) {}
+    public function __construct(
+        private readonly BusinessReportService $reports,
+        private readonly TelecallerReportService $telecallers,
+    ) {}
+
+    /**
+     * Telecaller performance (Phase 26, FR-RPT-01).
+     *
+     * The attribution model is returned alongside the rows, not left implicit.
+     * "Who converted this?" has more than one defensible answer, and a report
+     * that does not say which one it used invites an argument nobody can settle
+     * (GLOSSARY 2.6, T-24).
+     */
+    public function telecallers(Request $request): JsonResponse
+    {
+        return ApiResponse::success(
+            $this->telecallers->leaderboard(ReportPeriod::fromRequest($request)),
+            'Telecaller performance retrieved.',
+        );
+    }
 
     /** The dashboard tiles. */
     public function summary(Request $request): JsonResponse

@@ -127,9 +127,23 @@ When a lead is reassigned between telecallers, **who gets credit** for the conve
 
 | Option | Description |
 |--------|-------------|
-| **A — Last owner** *(proposed default)* | The telecaller who owned the lead when it converted. Simple, matches most incentive schemes |
+| **A — Last owner** *(**in force** since 2026-08-12 — default, not signed off)* | The telecaller who owned the lead when it converted. Simple, matches most incentive schemes |
 | **B — First interest creator** | The telecaller who first moved it to `Interested`. Rewards prospecting |
 | **C — Split** | Shared between owners, weighted by touches or time owned. Fairest, most complex |
+
+**Built 2026-08-12 as configuration, with A as the default (T-24).** `crm.attribution.model`
+accepts `last_owner` or `first_interest` and is changeable in Settings — switching is not a deploy.
+
+> **This is a default, not a ruling.** It decides what people are paid, so confirm it before it
+> drives commission. Every report says which model produced it, because "who converted this?" has
+> more than one defensible answer and a report that stays silent invites an argument nobody can
+> settle.
+>
+> **Option C (split) is deliberately not implemented.** It needs a weighting rule nobody has
+> specified, and inventing one would produce numbers that look authoritative and are not.
+>
+> An unrecognised value falls back to `last_owner` rather than matching nobody — a typo in a
+> setting must not silently zero everyone's pay.
 
 Same question applies to campaign-sourced leads: does the **campaign** or the **telecaller** own the conversion credit? *(Proposed: both are reported, in separate views — campaign attribution for marketing ROI, telecaller attribution for incentives.)*
 

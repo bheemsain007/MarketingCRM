@@ -257,6 +257,12 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('users')->g
 Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('reports')->group(function () {
     Route::get('/summary', [ReportController::class, 'summary'])
         ->middleware('permission:reports.business')->name('api.v1.reports.summary');
+
+    // Telecaller performance is gated on its OWN permission: reports.business
+    // is money, reports.telecaller is people, and they are not the same
+    // audience (FR-RPT-01).
+    Route::get('/telecallers', [ReportController::class, 'telecallers'])
+        ->middleware('permission:reports.telecaller')->name('api.v1.reports.telecallers');
     Route::get('/revenue', [ReportController::class, 'revenue'])
         ->middleware('permission:reports.business')->name('api.v1.reports.revenue');
     Route::get('/pipeline', [ReportController::class, 'pipeline'])

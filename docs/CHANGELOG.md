@@ -4,6 +4,38 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## Phase 26: telecaller reports - 2026-08-12
+
+The last phase that was blocked on a decision rather than on a vendor or a device. 12 tests. **Suite: 720 passing, 0 failing.**
+
+### The decision, taken
+Attribution (GLOSSARY 2.6) decides who is credited when a lead changed hands. **Last owner**, as the specification proposed - it matches how most incentive schemes already work - built as **configuration**, switchable to first-interest in Settings without a deploy.
+
+**This is a default, not a sign-off.** It decides what people are paid, and I have written that where it will be read rather than only here. Every report states which model produced it: "who converted this?" has more than one defensible answer, and a report that stays silent invites an argument nobody can settle.
+
+Option C (split) is deliberately not implemented. It needs a weighting rule nobody has specified, and inventing one would produce numbers that look authoritative and are not.
+
+### Formulas pinned against their wrong versions
+These numbers are read as judgements about people, so most of the tests exist to stop a plausible-looking mistake:
+
+- **Average call duration divides by connected calls, not attempts.** Dividing by attempts silently punishes whoever was handed a list of dead numbers - they did not make those numbers unreachable.
+- **Idle time is logged-in minus active minus break, not "time not on a call".** Somebody writing notes is working, and a report calling that idle is measuring the wrong thing about a person.
+- **Connect rate and contact rate are separate**, because they answer different questions: four dials to one lead who answered twice is 50% of dials and 100% of people.
+- **Talk time counts connected calls only.** Ringing is not work done.
+- **A rate with nothing to divide by is null, not 0%.** "Made no calls" and "made calls and connected none" are different facts about somebody's week.
+
+An unrecognised attribution value falls back to last-owner rather than matching nobody - a typo in a setting must not silently zero everyone's pay.
+
+### Two bugs caught on the way
+**Carbon returns a signed difference.** `$end->diffInSeconds($start)` yields a negative, which `max(0, ...)` flattened to zero - so every shift read as no time worked. Caught by the test asserting a two-hour session is 7200 seconds.
+
+**The config-contract test caught my own omission.** `ATTRIBUTION_MODEL` was read by `config/crm.php` and absent from `.env.example`; the test written earlier this session failed with "a key nobody knows to set is an integration that silently does nothing". That is precisely the case it was written for.
+
+### Still to do
+The screen. The API is complete and permission-gated on `reports.telecaller` - which is deliberately not `reports.business`: money and people are different audiences.
+
+---
+
 ## The duplicate review screen - 2026-08-12
 
 The services and the queue existed; nobody could see them. API and screen, 9 tests. **Suite: 708 passing, 0 failing.**
