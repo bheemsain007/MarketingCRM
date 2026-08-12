@@ -4,6 +4,40 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## Duplicate review and merge - 2026-08-12
+
+T-64, built. Duplicate handling had stopped at phone since Phase 6: BR-DUP-03 (email as a secondary signal) and BR-DUP-04 (merge) had no implementation at all. 14 tests. **Suite: 699 passing, 0 failing.**
+
+### Suppression union, achieved structurally
+BR-DUP-04's second half is the one that matters: **a merge must never un-suppress anybody.** Every other mistake here can be fixed by hand afterwards; that one puts a person who asked not to be contacted back on a dialling list.
+
+So it is not an `OR` somebody has to remember to write. The duplicate's `dnc_entries` are repointed to the survivor and the flag is then **recomputed from the survivor's own rows** - the union is a consequence of the data having moved. Two tests assert it in both directions.
+
+### The merged lead is kept, and keeps its number resolvable
+Soft-deleted rather than destroyed, because retaining history is the whole point of the rule and a merge has no undo.
+
+That alone would have created a quiet trap: a soft-deleted row still holds `unique(tenant_id, phone_e164)`, so the number would be reserved for ever and a later enquiry from it would resolve to a deleted record and stop. `merged_into_id` makes the redirect explicit, and `resolve()` follows the chain - loop-guarded, because a cycle would be a bug, and a bug that hangs a request is worse than one that returns the wrong lead.
+
+### What a merge deliberately does NOT do
+**It never changes the survivor's status.** Transitions are authorised and audited (BR-STAT-05), and a merge quietly moving a lead to `Converted` would be a status change nobody chose and nobody approved. What the duplicate was - its status, and its call, message and note counts - is written to the survivor's timeline for a human to act on through the normal path.
+
+Rows with a unique `(x, lead_id)` - products, tags, campaign recipients, customer links, dialer queue items - keep the survivor's copy and drop the duplicate's, because both assert the same fact.
+
+### Email flags, and only flags
+A shared address writes a review candidate and nothing else. **Two people at one company legitimately share `info@`**, and auto-merging on that evidence fuses distinct humans. Detection runs after creation and never blocks it: losing a real enquiry costs more than reviewing two records.
+
+Dismissals are kept. "These are different people" is an answer, and re-asking it on every import is how a review queue becomes noise nobody reads.
+
+### The old bug, in a new place
+Two tests failed because a factory-built lead has `tenant_id` **null in memory** - it is a database default - and `where('tenant_id', null)` becomes `IS NULL`, matching nothing. The detector would have silently found no duplicates for any lead created without an explicit tenant.
+
+Same shape as the data-scope bug fixed earlier in `HasRolesAndPermissions`. **Null-as-a-filter-value is the trap this codebase keeps walking into**, and it fails silently every time - the query runs, returns nothing, and nothing looks wrong.
+
+### Still to do
+The review screen. The services and the queue exist; an operator cannot yet see the queue - the same gap Phase 18 had for a day.
+
+---
+
 ## Campaign screens - 2026-08-12
 
 Phase 18 shipped an API nobody could press a button on. Three screens, 4 tests. **Suite: 685 passing, 0 failing.**

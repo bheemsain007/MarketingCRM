@@ -64,9 +64,15 @@ class Lead extends Model
         'updated_by',
     ];
 
+    public function mergedInto(): BelongsTo
+    {
+        return $this->belongsTo(Lead::class, 'merged_into_id');
+    }
+
     protected function casts(): array
     {
         return [
+            'merged_at' => 'datetime',
             'status' => LeadStatus::class,
             'temperature' => LeadTemperature::class,
             'score' => 'integer',

@@ -16,15 +16,20 @@ use Illuminate\Support\Facades\DB;
  * comes through here, so phone normalisation, duplicate detection and timeline
  * writing cannot be skipped by one entry path and not another.
  *
- * Duplicate handling here is phone-only, deliberately: BR-DUP-03 (email as a
- * secondary signal) and BR-DUP-04 (merge) are NOT built - see T-64. Both need
- * a review surface before they can exist, and auto-merging on a weaker signal
- * than phone would silently fuse two real people who share an office address.
+ * Duplicate handling is phone-first: the unique index makes a second lead for
+ * the same number impossible, so `guardDuplicate` exists only to turn that into
+ * an actionable 409 rather than a constraint violation.
+ *
+ * Email is a SECONDARY signal and is treated as one (BR-DUP-03). A shared
+ * address flags a review candidate and nothing more - two people at one company
+ * legitimately share `info@`, and merging on that evidence fuses distinct
+ * humans. Merging itself lives in LeadMergeService (BR-DUP-04).
  */
 class LeadService
 {
     public function __construct(
         private readonly LeadAssignmentService $assignment,
+        private readonly DuplicateDetector $duplicates,
     ) {}
 
     /**
@@ -66,6 +71,14 @@ class LeadService
             ]));
 
             $this->recordActivity($lead, $actorId, 'lead_created', 'Lead created');
+
+            /*
+             * BR-DUP-03: a shared email with a different phone is flagged for
+             * review, never auto-merged. Deliberately after creation and never
+             * blocking it - the cost of losing a real enquiry is higher than
+             * the cost of reviewing two records later.
+             */
+            $this->duplicates->check($lead);
 
             if ($autoAssign) {
                 $this->assignment->autoAssign($lead, $actorId);

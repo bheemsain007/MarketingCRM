@@ -210,17 +210,35 @@ Phone numbers are normalised to E.164 before comparison and storage. Matching is
 ### BR-DUP-02 — Behaviour on duplicate
 A create/import matching an existing lead does not insert a second row. It is flagged as a duplicate and either rejected or merged into the existing lead's timeline, per import policy — never silently double-inserted (FR-LEAD-06).
 
-### BR-DUP-03 — Secondary matching *(not built — T-64)*
+### BR-DUP-03 — Secondary matching *(built 2026-08-12 — T-64)*
 Email is a secondary signal: same email + different phone is flagged for review, not auto-merged.
 
-> **Status:** no implementation. Needs a review queue to be flagged *into*, and `info@`-style shared
-> addresses mean this must never auto-merge.
+> A shared address writes a row to `lead_duplicate_candidates` and does nothing else. Detection runs
+> **after** creation and never blocks it: losing a real enquiry costs more than reviewing two records.
+>
+> Pairs are stored ordered (`lead_id < duplicate_lead_id`) so one question cannot become two rows,
+> and **dismissals are kept** — "these are different people" is an answer, and re-asking it on every
+> import is how a review queue becomes noise nobody reads. A `backfill()` sweep covers leads captured
+> before detection existed, pairing every combination rather than only consecutive ones.
 
-### BR-DUP-04 — Merge preserves history *(not built — T-64)*
+### BR-DUP-04 — Merge preserves history *(built 2026-08-12 — T-64)*
 Merging retains both leads' notes, calls, messages, and status history. Suppression is **union** — if either record is suppressed, the merged lead is suppressed.
 
-> **Status:** there is no merge operation in the codebase. The union rule for suppression is the part
-> to get right first: merging must never be able to *un*-suppress somebody.
+> **Union is achieved structurally.** The duplicate's `dnc_entries` are repointed to the survivor and
+> the flag is then *recomputed* from the survivor's own rows — so the union is a consequence of the
+> data moving, not an `OR` somebody has to remember to write. Two tests assert a merge can never
+> un-suppress anybody, in either direction.
+>
+> **The duplicate is soft-deleted, never destroyed**, and carries `merged_into_id`. Without that
+> pointer its phone number would hold the `unique(tenant_id, phone_e164)` index for ever, and a later
+> enquiry from that number would resolve to a deleted row and stop.
+>
+> **A merge never changes the survivor's status.** Transitions are authorised and audited
+> (BR-STAT-05); a merge quietly moving a lead to `Converted` would be a status change nobody chose.
+> What the duplicate was is recorded on the timeline for a human to act on through the normal path.
+>
+> Rows with a unique `(x, lead_id)` — products, tags, campaign recipients, customer links, dialer
+> queue items — keep the survivor's copy and drop the duplicate's: both assert the same fact.
 
 ---
 
