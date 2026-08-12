@@ -299,8 +299,21 @@ Eligibility is re-evaluated inside the per-recipient job (BR-DNC-03).
 ### BR-CAMP-03 — Bulk always queued
 No campaign of any size sends inline in an HTTP request (FR-CAMP-05).
 
-### BR-CAMP-04 — Frequency capping *(proposed)*
-A lead may not receive more than *N* campaign messages per channel per rolling 24h, or *M* per week, across all campaigns. Defaults proposed: **2/day, 5/week per channel**. Configurable; transactional/service messages exempt.
+### BR-CAMP-04 — Frequency capping *(confirmed and built 2026-08-12)*
+A lead may not receive more than *N* campaign messages per channel per rolling 24h, or *M* per week, across all campaigns. **Confirmed at 2/day, 5/week per channel.** Configurable; transactional/service messages exempt.
+
+> **Rolling windows, not calendar ones.** A calendar-day cap lets two campaigns at 23:50 and 00:10
+> land twenty minutes apart and both count as "one a day" — exactly the experience the cap exists
+> to prevent.
+>
+> **The transactional exemption is structural**, not a flag: only messages carrying a `campaign_id`
+> are counted. A payment receipt cannot consume somebody's marketing allowance, and a marketing
+> send cannot hide behind being transactional. **Skipped messages do not count either** — a lead
+> who was skipped yesterday did not receive anything, and capping them for it compounds one problem
+> into two.
+>
+> A cap of zero means "no cap", not "block everything": a misconfiguration should not silently stop
+> all marketing.
 
 ### BR-CAMP-05 — Lifecycle semantics
 `Pause` stops new dispatch; jobs already handed to the provider complete and are recorded. `Stop` is terminal — a stopped campaign cannot be resumed, only cloned.

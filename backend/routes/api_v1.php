@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\CallController;
+use App\Http\Controllers\Api\V1\CampaignController;
 use App\Http\Controllers\Api\V1\DialerController;
 use App\Http\Controllers\Api\V1\DncController;
 use App\Http\Controllers\Api\V1\FollowUpController;
@@ -532,7 +533,44 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('dialer')->
 
 /*
 |--------------------------------------------------------------------------
-| Phase 11+ : recordings, channels, campaigns
+| Phase 18 : Campaign Engine (FR-CAMP-01..05)
+|--------------------------------------------------------------------------
+| Three permissions, deliberately separate: `campaigns.view` reads reports,
+| `campaigns.manage` builds and edits, `campaigns.run` presses send. Building
+| a campaign and being allowed to send it to twelve thousand people are not
+| the same authority.
+*/
+Route::middleware('auth:sanctum')->prefix('campaigns')->group(function () {
+    Route::get('/', [CampaignController::class, 'index'])
+        ->middleware('permission:campaigns.view')->name('api.v1.campaigns.index');
+    Route::get('/{campaign}', [CampaignController::class, 'show'])
+        ->middleware('permission:campaigns.view')->name('api.v1.campaigns.show');
+    Route::get('/{campaign}/recipients', [CampaignController::class, 'recipients'])
+        ->middleware('permission:campaigns.view')->name('api.v1.campaigns.recipients');
+
+    // Reads the audience without sending. Safe enough for anyone who may build
+    // a campaign, and the whole point is to look before pressing send.
+    Route::get('/{campaign}/preview', [CampaignController::class, 'preview'])
+        ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.preview');
+
+    Route::post('/', [CampaignController::class, 'store'])
+        ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.store');
+    Route::patch('/{campaign}', [CampaignController::class, 'update'])
+        ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.update');
+    Route::post('/{campaign}/clone', [CampaignController::class, 'clone'])
+        ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.clone');
+
+    Route::post('/{campaign}/start', [CampaignController::class, 'start'])
+        ->middleware('permission:campaigns.run')->name('api.v1.campaigns.start');
+    Route::post('/{campaign}/pause', [CampaignController::class, 'pause'])
+        ->middleware('permission:campaigns.run')->name('api.v1.campaigns.pause');
+    Route::post('/{campaign}/stop', [CampaignController::class, 'stop'])
+        ->middleware('permission:campaigns.run')->name('api.v1.campaigns.stop');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Phase 11+ : recordings, remaining channels
 | ... see docs/API_DOCUMENTATION.md §11
 |--------------------------------------------------------------------------
 */

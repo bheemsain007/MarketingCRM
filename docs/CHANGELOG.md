@@ -4,6 +4,36 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## Phase 18: the campaign engine - 2026-08-12
+
+Built on the channel drivers that already exist, so **no vendor was needed for any of it**. 16 tests. **Suite: 681 passing, 0 failing.** Closes T-61.
+
+### Eligibility is asked again at dispatch
+The audience is resolved once, into `campaign_recipients`. Whether each lead may actually be sent to is decided **per recipient, when the message is about to go** (BR-CAMP-02) - because an audience resolved at 09:00 and still sending at 09:40 is a set of assumptions that has had forty minutes to go stale.
+
+The case this exists for is ordinary: somebody opts out at 09:20 while the campaign is working through twelve thousand recipients. A test suppresses a lead after the audience is built and asserts the recipient is skipped with reason `suppressed` and **no message row is created at all**.
+
+That is three DNC checks on one send - audience, dispatch, provider hand-off. None is redundant; each runs at a different moment.
+
+### Every targeted lead gets a message or a reason
+`CampaignSkipReason` is a closed set - suppressed, no contact detail, frequency capped, campaign not running - because these are reported on, and a free-text reason is one nobody can group by. **"4,000 leads were skipped" is nearly useless; "3,800 suppressed, 200 with no mobile number" tells an operator what to fix.**
+
+Reasons also carry whether they are transient: a cap lifts tomorrow, a missing phone number does not appear by itself.
+
+### Decisions taken here
+- **Frequency caps confirmed at 2/day, 5/week per channel**, on **rolling** windows. A calendar-day cap lets 23:50 and 00:10 both count as "one a day", which is the experience the cap exists to prevent. Transactional messages are exempt structurally - only rows with a `campaign_id` count - so a receipt cannot spend somebody's marketing allowance. Skipped messages do not count: a lead who received nothing must not be capped for it.
+- **A resumed campaign does not rebuild its audience.** It sends to the people it targeted, not whoever matches now - otherwise pausing quietly changes who was reached and the report stops describing a single event.
+- **Campaigns cannot dial.** Calling has consent, calling-hours and single-assignment rules (BR-CALL-02/03/04) that a bulk send knows nothing about, so `call` and `ai_call` are refused at validation.
+- **Stop is terminal**, clone is the way back. Stop is what somebody reaches for when a campaign is going wrong; it has to actually mean stop.
+- **Three permissions, not one.** Building a campaign and being allowed to send it to twelve thousand people are different authorities.
+
+### What the type system caught
+Adding a `CampaignStatus` cast to the model silently broke two existing helpers that compared `$this->status === 'stopped'` against a string. **Static analysis found it, not the tests** - neither helper was covered. Both now compare enums, and `canResume()` asks the transition matrix rather than re-encoding it.
+
+One test premise of mine was also wrong: I assumed a telecaller holds `campaigns.view`. They hold nothing on campaigns at all, which is correct - bulk sending to the whole database is a manager's job. The test now proves the separation with Viewer, who can read a campaign report but cannot send one.
+
+---
+
 ## The DNC matrix is configuration now - but only half of it - 2026-08-12
 
 T-65, decided and built. BR-DNC-04 has always said the reason x channel matrix should be configuration rather than code; it was a `match` in an enum, so changing whether "Not Interested" blocks manual calls meant an edit and a deploy. 8 tests. **Suite: 665 passing, 0 failing.**
