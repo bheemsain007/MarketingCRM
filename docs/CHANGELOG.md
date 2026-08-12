@@ -4,6 +4,26 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## Campaign screens - 2026-08-12
+
+Phase 18 shipped an API nobody could press a button on. Three screens, 4 tests. **Suite: 685 passing, 0 failing.**
+
+### The preview is the point of the builder
+"12,000 leads" and "12,000 leads of whom 4,000 are suppressed" are different decisions, and after pressing send is too late to learn which one you were making. The builder saves a draft and then reads the real audience back - matched, reachable, suppressed, and no-address-for-this-channel - through the same endpoint the campaign itself uses.
+
+### The buttons follow the server, not the status string
+The detail screen renders whatever `can_start` / `can_pause` / `can_stop` the API returns rather than deciding from the status. Re-deriving them in JavaScript would be a second copy of BR-CAMP-05 that nothing keeps in step - and the copy is always the one that gets a rule wrong.
+
+Stop asks for confirmation in the browser, because the API cannot undo it: a stopped campaign clones, never resumes.
+
+### The skip breakdown is the screen's real job
+Counts answer "did it go out?". **The breakdown answers "why did it not reach these people?", which is the question that leads to an action** - and the recipients table filters by reason so the answer is a list of names, not a number.
+
+### Small thing, deliberately done
+A telecaller gets no campaigns nav link at all, and a test asserts the link is absent rather than only that the page 403s. The nav is usability rather than security - the route middleware is the gate - but offering a link that only leads to a refusal is its own small failure.
+
+---
+
 ## Phase 18: the campaign engine - 2026-08-12
 
 Built on the channel drivers that already exist, so **no vendor was needed for any of it**. 16 tests. **Suite: 681 passing, 0 failing.** Closes T-61.

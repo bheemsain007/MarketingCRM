@@ -2,8 +2,11 @@
 
 namespace Tests\Feature\Web;
 
+use App\Enums\CampaignStatus;
+use App\Enums\Channel;
 use App\Enums\LeadStatus;
 use App\Enums\RoleName;
+use App\Models\Campaign;
 use App\Models\FollowUp;
 use App\Models\Lead;
 use App\Models\Role;
@@ -876,5 +879,62 @@ class WebCrmTest extends TestCase
         // A browser page redirects to /login; the API must not. A redirect
         // here would hand an AJAX caller an HTML login page it cannot parse.
         $this->getJson('/api/v1/leads')->assertStatus(401);
+    }
+
+    // -----------------------------------------------------------------------
+    // Campaign screens (Phase 18)
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function the_campaign_screens_load_for_a_manager(): void
+    {
+        $this->actingAs($this->user(RoleName::Manager));
+
+        $campaign = Campaign::create([
+            'tenant_id' => config('crm.default_tenant_id'),
+            'name' => 'August offer',
+            'channel' => Channel::Email->value,
+            'status' => CampaignStatus::Draft->value,
+        ]);
+
+        $this->get('/campaigns')->assertOk()->assertSee('Campaigns');
+        $this->get('/campaigns/create')->assertOk();
+        $this->get("/campaigns/{$campaign->id}")->assertOk();
+    }
+
+    #[Test]
+    public function a_viewer_can_read_campaigns_but_not_reach_the_builder(): void
+    {
+        // Reporting on a campaign is not authority to build or send one.
+        $this->actingAs($this->user(RoleName::Viewer));
+
+        $this->get('/campaigns')->assertOk();
+        $this->get('/campaigns/create')->assertStatus(403);
+    }
+
+    #[Test]
+    public function a_telecaller_gets_no_campaign_screens_and_no_nav_link(): void
+    {
+        $this->actingAs($this->user(RoleName::Telecaller));
+
+        $this->get('/campaigns')->assertStatus(403);
+
+        // The nav is a usability measure, not the gate - but offering a link
+        // that only leads to a 403 is its own small failure.
+        $this->get('/dashboard')->assertOk()->assertDontSee('href="/campaigns"', false);
+    }
+
+    #[Test]
+    public function the_campaign_builder_never_offers_a_calling_channel(): void
+    {
+        $this->actingAs($this->user(RoleName::Manager));
+
+        // Calling has consent, calling-hours and single-assignment rules that a
+        // bulk send knows nothing about, and the API refuses it - so the form
+        // must not offer it either.
+        $this->get('/campaigns/create')
+            ->assertOk()
+            ->assertDontSee('value="call"', false)
+            ->assertDontSee('value="ai_call"', false);
     }
 }

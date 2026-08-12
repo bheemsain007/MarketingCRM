@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Last updated** | 2026-08-11 (UI pass, DNC slice, settings, Phases 12/13/15/20/21/22/23/27, T-46 + T-60 closed, DNC matrix, lead-page tabs, CI, config contract, static analysis, model annotations, dashboard, README, rule-coverage audit, T-54, T-52, cache leak, T-65, Phase 18) |
-| **Current position** | Phase 8 UI pass complete, Phase 19 admin surface built early. **Suite: 681 passing, 0 failing** — T-48 diagnosed and worked around. **Phase 11 is still genuinely blocked**: it needs T-44 answered and ADR-B confirmed |
+| **Current position** | Phase 8 UI pass complete, Phase 19 admin surface built early. **Suite: 685 passing, 0 failing** — T-48 diagnosed and worked around. **Phase 11 is still genuinely blocked**: it needs T-44 answered and ADR-B confirmed |
 | **Open items** | 49 of 55 |
 
 Every task has a **stable ID (`T-nn`)**. IDs are never reused or renumbered — a completed task keeps its number and moves to §1, so "T-14 is done" means the same thing in six months. Reference them in commits and phase reports.

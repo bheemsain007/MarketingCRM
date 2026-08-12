@@ -58,6 +58,13 @@ Route::middleware('auth')->group(function () {
 
     // Not data-scoped, like the API behind it: a business dashboard is the
     // organisation-wide view (FR-RPT-03, T-60).
+    Route::get('/campaigns', [PageController::class, 'campaigns'])
+        ->middleware('permission:campaigns.view')->name('web.campaigns');
+    Route::get('/campaigns/create', [PageController::class, 'campaignCreate'])
+        ->middleware('permission:campaigns.manage')->name('web.campaigns.create');
+    Route::get('/campaigns/{campaign}', [PageController::class, 'campaign'])
+        ->middleware('permission:campaigns.view')->name('web.campaigns.show');
+
     Route::get('/reports', [PageController::class, 'reports'])
         ->middleware('permission:reports.business')->name('web.reports');
 

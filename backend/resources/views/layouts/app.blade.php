@@ -81,6 +81,12 @@
     </a>
     @endpermission
 
+    @permission('campaigns.view')
+    <a href="{{ route('web.campaigns') }}" class="{{ request()->routeIs('web.campaigns*') ? 'active' : '' }}">
+        <i class="bi bi-megaphone me-2"></i>Campaigns
+    </a>
+    @endpermission
+
     @permission('reports.business')
     <a href="{{ route('web.reports') }}" class="{{ request()->routeIs('web.reports') ? 'active' : '' }}">
         <i class="bi bi-graph-up me-2"></i>Reports

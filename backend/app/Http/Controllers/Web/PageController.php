@@ -3,16 +3,21 @@
 namespace App\Http\Controllers\Web;
 
 use App\Enums\CallStatus;
+use App\Enums\CampaignSkipReason;
+use App\Enums\CampaignStatus;
 use App\Enums\DataScope;
 use App\Enums\DncReason;
 use App\Enums\LeadStatus;
+use App\Enums\LeadTemperature;
 use App\Enums\Permission;
 use App\Enums\RoleName;
 use App\Http\Controllers\Controller;
+use App\Models\Campaign;
 use App\Models\Lead;
 use App\Models\LeadSource;
 use App\Models\Product;
 use App\Models\Tag;
+use App\Services\Campaigns\CampaignService;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 
@@ -224,5 +229,37 @@ class PageController extends Controller
     public function imports(): View
     {
         return view('imports.index');
+    }
+
+    /**
+     * Campaigns (Phase 18).
+     *
+     * The enums are passed in rather than hardcoded in the Blade, so the
+     * filters and the channel list cannot drift from what the API accepts -
+     * a hardcoded list here would be a second copy of the lifecycle.
+     */
+    public function campaigns(): View
+    {
+        return view('campaigns.index', [
+            'statuses' => CampaignStatus::cases(),
+            'channels' => app(CampaignService::class)->supportedChannels(),
+        ]);
+    }
+
+    public function campaignCreate(): View
+    {
+        return view('campaigns.create', [
+            'channels' => app(CampaignService::class)->supportedChannels(),
+            'leadStatuses' => LeadStatus::cases(),
+            'temperatures' => LeadTemperature::cases(),
+        ]);
+    }
+
+    public function campaign(Campaign $campaign): View
+    {
+        return view('campaigns.show', [
+            'campaign' => $campaign,
+            'skipReasons' => CampaignSkipReason::cases(),
+        ]);
     }
 }
