@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Last updated** | 2026-08-11 (UI pass, DNC slice, settings, Phases 12/13/15/20/21/22/23/27, T-46 + T-60 closed, DNC matrix, lead-page tabs, CI, config contract, static analysis, model annotations, dashboard, README, rule-coverage audit, T-54, T-52, cache leak, T-65, Phase 18) |
-| **Current position** | Phase 8 UI pass complete, Phase 19 admin surface built early. **Suite: 720 passing, 0 failing** — T-48 diagnosed and worked around. **Phase 11 is still genuinely blocked**: it needs T-44 answered and ADR-B confirmed |
-| **Open items** | 49 of 55 |
+| **Last updated** | 2026-08-12 (Phases 14/16/17 WhatsApp/RCS/Voice built unkeyed, Phase 26 telecaller report UI; plus the 2026-08-11 pass: DNC slice, settings, Phases 12/13/15/20/21/22/23/27, T-46 + T-60 closed, DNC matrix, lead-page tabs, CI, config contract, static analysis, model annotations, dashboard, README, rule-coverage audit, T-54, T-52, cache leak, T-65, Phase 18) |
+| **Current position** | Phases 11 (server side), 14/16/17 (channels), 19 (DNC), 24/25 (AI calling, unkeyed), 26 (telecaller UI), 27 (campaign report) all closed 2026-08-12. **Suite: 789 passing, 0 failing** — T-48 worked around. Every server-side capability is built; what is left is the mobile app, deployment, and the **device** halves of calling/recording, which still need T-44 answered and ADR-B confirmed |
+| **Open items** | 49 of 55 (T-31/T-32/T-33 de-escalated from blockers to vendor-confirmation) |
 
 Every task has a **stable ID (`T-nn`)**. IDs are never reused or renumbered — a completed task keeps its number and moves to §1, so "T-14 is done" means the same thing in six months. Reference them in commits and phase reports.
 
@@ -55,7 +55,7 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 | **T-19** | BR-CAMP-04 — frequency caps | Phase 18 | 2/day, 5/week per channel |
 | **T-20** | BR-NOTIF-02/04 — notification triggers + reminder lead time | Phase 21 — shipped | Built at 15 min (`crm.follow_up.reminder_lead_minutes`), one reminder per follow-up. Triggers built so far: follow-up due, follow-up assigned/transferred, lead assigned. The rest of BR-NOTIF-02's list (campaign completed, payment overdue, upload failure, approval requests) lands with the phases that create those events. **Confirm the 15 minutes** |
 | **T-21** | BR-SALE-03 — discount approval threshold | Phase 22 — shipped | Built at 15% (`crm.discount_approval_threshold`), so changing it is config not a deploy. Above the threshold a quotation cannot be issued without Manager+ approval, and **the approver may not be the person who raised it**. **Confirm the 15%** |
-| **T-22** | BR-INT-04 — AI interest confidence threshold | Phase 24/25 | 0.75 |
+| **T-22** | BR-INT-04 — AI interest confidence threshold — **now live (2026-08-12)** | Phase 24/25 | 0.75 (`crm.ai_interest_confidence_threshold`, env-tunable). Now actually enforced by the InterestEngine on Vaaad AI-call results: at/above it a signal moves the lead, below it the evidence is kept but does not reclassify. **Confirm the 0.75** |
 | ~~**T-23**~~ | ~~BR-CUST-01 — Lead and Customer as separate linked records~~ | ~~Phase 22~~ | ✅ **Built 2026-08-11 as specified.** The lead survives conversion; the customer links back through `origin_lead_id` and is deduplicated on phone then email (BR-CUST-04) |
 | **T-47** | Should a manually created lead auto-assign to its creator? | Nothing — **de-escalated** | **No** (current behaviour), and the third option is now built: the unassigned pool has a manager's inbox, so a lead created by a telecaller is visible to someone and does not vanish. That matches how imports already behave. The question is now about convenience rather than correctness: a telecaller who creates a lead still cannot work it until a manager assigns it. Remaining options if that proves annoying — self-assign on manual creation, or run auto-assignment (BR-ASSIGN-01) on it |
 
@@ -64,7 +64,7 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 | ID | Task | Notes |
 |----|------|-------|
 | **T-24** | ⚠️ **Attribution model** | On reassignment, who gets conversion + revenue credit? Last owner (proposed) / first interest creator / split. **This affects telecaller pay** ([GLOSSARY §2.6](GLOSSARY.md#26--attribution--needs-a-business-decision-)) |
-| **T-25** | Campaign vs. telecaller credit | Proposed: report both separately — marketing ROI vs. incentives |
+| **T-25** | Campaign vs. telecaller credit | Proposed: report both separately — marketing ROI vs. incentives. **Built that way 2026-08-12**: campaign performance is its own report (`/api/v1/reports/campaigns`, marketing ROI) and telecaller performance is separate (Phase 26, incentives). The two are never mixed into one number |
 | ~~**T-60**~~ | ~~Chart.js report dashboards (FR-RPT-03)~~ | ✅ **Built 2026-08-11** at `/reports`: eight tiles, a lead funnel, a money chart, loss reasons, source performance and revenue by product. Every rate is drawn with its denominator (FR-RPT-06) and a zero denominator shows an em dash. **T-27 is still worth doing** - the charts render whatever the API returns, so confirming the formulas changes the numbers, not the screen |
 | **T-26** | Headline conversion rate basis | Cohort-based (proposed) vs. simple period ratio |
 | **T-27** | Review metric formulas — **now built, so worth reviewing** | [GLOSSARY Part 2](GLOSSARY.md#part-2--metric-definitions) — especially Talk Time, Average Call Duration (÷ *connected* calls), and Revenue collected vs. Booked Value |
@@ -82,9 +82,9 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 | ID | Task | Blocks |
 |----|------|--------|
 | ~~**T-35**~~ *(partly)* | Mailercloud + BhashSMS are now **built** against conventional wire formats and need only keys; their real API contracts are T-53. Meta, Vaaad and the unnamed vendors are still outstanding | Phases 12, 14, 16, 17, 24 |
-| **T-31** | WhatsApp BSP — Meta direct, or Gupshup / Interakt / other? | Phase 14 |
-| **T-32** | RCS provider — not named | Phase 16 |
-| **T-33** | Voice SMS / Voice provider — not named | Phase 17 |
+| **T-31** | WhatsApp BSP — Meta direct, or Gupshup / Interakt / other? **Channel now built unkeyed (2026-08-12)** against the **Meta Cloud API direct** shape, because the `.env` keys Phase 1 settled on are the Cloud API's own. Works end to end via `LogDriver`; needs only keys. If a BSP is chosen instead, that is one more driver class — nothing else moves. The question is now "confirm Meta-direct or name a BSP", not a blocker | Phase 14 |
+| **T-32** | RCS provider — not named. **Channel now built unkeyed (2026-08-12)** against the conventional CPaaS-aggregator REST shape; the row records whichever provider is configured. Name the vendor to point it at production | Phase 16 |
+| **T-33** | Voice SMS / Voice provider — not named. **Channel now built unkeyed (2026-08-12)** as the outbound *message* voice channel (TTS announcement), distinct from interactive `Call`/`AiCall`. Provisional REST shape; name the vendor to finalise | Phase 17 |
 | **T-34** | Payment gateway — Razorpay / PayU / Stripe / other? | Phase 23 |
 | **T-35** | Credentials + API docs: Mailercloud, BhashSMS, Vaaad, Meta app | Phases 12–17, 24 |
 | **T-36** | ⏳ **Start WhatsApp Business verification now** | Meta business verification + template approval takes weeks and can be rejected. Begin well before Phase 14 or the channel will not be ready when the code is |
@@ -93,9 +93,10 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 
 | ID | Task | Notes |
 |----|------|-------|
-| **T-37** | Retention periods per data class | Call recordings, AI transcripts, webhook payloads, application logs (SEC-PII-05) |
+| **T-37** | Retention periods per data class — **recordings now enforced, the rest still open** | Call recordings, AI transcripts, webhook payloads, application logs (SEC-PII-05). **Recordings became real on 2026-08-12**: `crm.recordings.retention_days` (365) is stamped onto each row at upload and `crm:purge-recordings` deletes the audio daily, keeping the row and writing an audit entry. Until then the period was a number in a config file that nothing read. **Confirm the 365 days**, and give the other three data classes their own answer |
+| **T-66** | BR-REC-01 says the owning telecaller may listen to their own call; the permission map does not let them | Found 2026-08-12 while building Phase 11. The rule reads "restricted to the owning telecaller and Manager+", but `Permission::defaultsFor()` gives `recordings.listen` to Manager and above only — a telecaller cannot play back their own call. **Not changed unilaterally**: the roles are seeded data (T-08) and this is a real judgment call, not an oversight. Listening to recorded conversations is arguably supervisory even when it is your own call, and the current behaviour is the more conservative of the two. **Decide**: grant `RecordingsListen` to Telecaller (matches BR-REC-01 as written), or amend BR-REC-01 to say Manager+ only (matches the code) |
 | **T-38** | Encryption-at-rest mechanism | Disk-level or application-level, for recordings/transcripts (SEC-PII-02) |
-| **T-63** | Burn down the PHPStan baseline — **280 → 97 on 2026-08-11** | The big win is taken: model `@property` and `@property-read` annotations, generated from `information_schema` and from reflecting the relation methods rather than hand-written, so they cannot drift. **Nothing dangerous was hiding behind the noise** - the remaining 97 are `?->` on non-nullable values and narrow array-shape inference. Next steps, in order of value: annotate the resource/service locals the analyser cannot infer, then raise the level one at a time. Low priority |
+| **T-63** | Burn down the PHPStan baseline — **280 → 97 → 65 (2026-08-12)** | The big win was taken 2026-08-11 (model `@property`/`@property-read` annotations generated from `information_schema`, so they cannot drift). On 2026-08-12 the `?->`-on-non-nullable group was cleared: 28 baseline entries removed, every one verified against the schema (NOT NULL columns, enum casts) and the full suite (744 still green). **One was deliberately kept** — `AuthService::logout()`'s `currentAccessToken()?->delete()`: Sanctum's annotation says non-null but it returns null on the session/web logout path, so the nullsafe is correct and the annotation is the lie. Remaining 65 are `property.notFound` on dynamic access and narrow array-shape inference. Next: annotate the resource/service locals the analyser cannot infer, then raise the level one at a time. Low priority |
 | **T-62** | Confirm `.env.example` defaults `APP_DEBUG=false` | Changed 2026-08-11, against Laravel's shipped example. The deployment path is copying this file on the server (DEPLOYMENT §3A), and a debug page leaks credentials in a stack trace (SEC-CFG-03). Cost: a developer must set `APP_DEBUG=true` in their own `.env`. **Say if you would rather have the convenience** - it is one line either way, and the risk is asymmetric |
 | **T-39** | CSP strictness | Given inline jQuery/Bootstrap usage (SEC-OPS-02) |
 | **T-50** | What authority should `DncReason::requiresElevatedRemoval()` demand? | The enum has flagged `Do Not Contact` and `Opted Out` as "never undone casually" since Phase 2, and nothing has ever enforced it — the method was tested but unused. BR-DNC-06 only says removal is Manager+, which `dnc.remove` already satisfies, so there is no rule saying what *stricter* means. **Built as: the API reports the flag and the DNC screen shows a warning before lifting one; authority is not raised.** Decide whether it should be a distinct permission (the codebase's idiom, as with `leads.reopen`), Admin-only, or dropped from the enum as an idea that did not survive |
@@ -132,10 +133,18 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 
 0. ~~**T-48** — restore a working test database~~ ✅ **Worked around 2026-08-11**; the suite runs again. The corrupt `mysql.db` table and the MariaDB-vs-MySQL mismatch both remain — see T-48
 1. **T-44** — Android call-recording feasibility on real devices. Now the *first* thing, not the third: Android 10+ blocks third-party call recording on most modern handsets, and ADR-B is built on the assumption that it works. Answer this and T-28 largely answers itself
-2. **T-28** — ADR-B, the calling architecture. Still gates Phases 10, 11, 31 and 32 (the Phase 9 server side is built and is unaffected either way)
+2. **T-28** — ADR-B, the calling architecture. Now gates **only the device halves**, Phases 31 and 32: the server sides of Phases 9, 10 and 11 are all built and are unaffected either way, because a call record, an ordered queue and a place to put recordings are needed under any dialling mechanism
 3. **T-17** — BR-CALL-04 calling hours. Implemented at 09:00–20:00 in the **lead's** timezone and now enforced on every dial. Worth confirming the window, since it silently blocks work outside it
 4. **T-36** — start WhatsApp verification, because the clock is external and not ours
 
 ## Roadmap
 
-Full Phase 1–36 tracking in [MODULE_STATUS.md](MODULE_STATUS.md). **Next: Phase 11 — Call Recording**, which cannot start until T-44 is answered and ADR-B is confirmed. The alternative next step, if those stay open, is the dialer UI (T-46).
+Full Phase 1–36 tracking in [MODULE_STATUS.md](MODULE_STATUS.md).
+
+**The server-side roadmap is finished.** As of 2026-08-12 every phase that could be built without a device, a vendor contract or a deployment is built: 1–7, 8 (UI core), 9/10/11 (server sides), 12–22, 23 (offline half), 24/25, 26, 27.
+
+**What is left is not blocked on code:**
+- **Phases 28/29** — Web CRM testing and production. Hosting is settled (Hostinger shared, T-03); this needs an E2E tool choice (T-42) and an actual deploy, which is a server operation rather than a build.
+- **Phases 30, 33, 34** — the Flutter Android app. A separate track that has not been started at all.
+- **Phases 31/32** — device calling and recording. Blocked on **T-44** (a physical-handset recording test) and ADR-B. Their server sides are already built and will not change whichever way T-44 lands.
+- **Phase 35/36** — release, and the SaaS/white-label option `tenant_id` was reserved for.
