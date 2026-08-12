@@ -7,6 +7,9 @@ use App\Enums\Channel;
 use App\Services\Messaging\Drivers\BhashSmsDriver;
 use App\Services\Messaging\Drivers\LogDriver;
 use App\Services\Messaging\Drivers\MailercloudDriver;
+use App\Services\Messaging\Drivers\RcsDriver;
+use App\Services\Messaging\Drivers\VoiceDriver;
+use App\Services\Messaging\Drivers\WhatsAppDriver;
 use App\Services\Settings\SettingsService;
 
 /**
@@ -47,9 +50,13 @@ class MessageDriverManager
         return match ($channel) {
             Channel::Email => new MailercloudDriver($this->settings),
             Channel::Sms => new BhashSmsDriver($this->settings),
+            Channel::WhatsApp => new WhatsAppDriver($this->settings),
+            Channel::Rcs => new RcsDriver($this->settings),
+            Channel::Voice => new VoiceDriver($this->settings),
 
-            // Phases 14, 16, 17 and 24. Each lands as one more arm here;
-            // nothing else in the send path changes.
+            // Phase 24 (AI calling) still lands as one more arm here; nothing
+            // else in the send path changes. The interactive calling channels
+            // (Call/AiCall) are not message channels and have no driver.
             default => null,
         };
     }
