@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\HealthController;
 use App\Http\Controllers\Api\V1\InterestController;
 use App\Http\Controllers\Api\V1\LeadAssignmentController;
 use App\Http\Controllers\Api\V1\LeadController;
+use App\Http\Controllers\Api\V1\LeadDuplicateController;
 use App\Http\Controllers\Api\V1\LeadImportController;
 use App\Http\Controllers\Api\V1\LeadNoteController;
 use App\Http\Controllers\Api\V1\LeadProductController;
@@ -287,6 +288,23 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () 
      */
     Route::get('/interested-leads', [InterestController::class, 'interested'])
         ->middleware('permission:leads.view')->name('api.v1.leads.interested');
+
+    /*
+     * Duplicate review (BR-DUP-03/04, T-64). Same path reasoning as above -
+     * `/lead-duplicates`, not `/leads/duplicates`.
+     *
+     * Merging is gated on `leads.archive`, not `leads.update`: it is
+     * irreversible and takes a record out of circulation, which is archiving's
+     * authority rather than editing's. A telecaller holds neither.
+     */
+    Route::get('/lead-duplicates', [LeadDuplicateController::class, 'index'])
+        ->middleware('permission:leads.view')->name('api.v1.leads.duplicates.index');
+    Route::post('/lead-duplicates/{candidate}/merge', [LeadDuplicateController::class, 'merge'])
+        ->middleware('permission:leads.archive')->name('api.v1.leads.duplicates.merge');
+    Route::post('/lead-duplicates/{candidate}/dismiss', [LeadDuplicateController::class, 'dismiss'])
+        ->middleware('permission:leads.archive')->name('api.v1.leads.duplicates.dismiss');
+    Route::post('/lead-duplicates/backfill', [LeadDuplicateController::class, 'backfill'])
+        ->middleware('permission:leads.archive')->name('api.v1.leads.duplicates.backfill');
 
     Route::post('/leads/{lead}/interest', [InterestController::class, 'store'])
         ->middleware('permission:leads.update')->name('api.v1.leads.interest.store');

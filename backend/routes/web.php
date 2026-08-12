@@ -56,8 +56,11 @@ Route::middleware('auth')->group(function () {
     Route::get('/dialer', [PageController::class, 'dialer'])
         ->middleware('permission:dialer.use')->name('web.dialer');
 
-    // Not data-scoped, like the API behind it: a business dashboard is the
-    // organisation-wide view (FR-RPT-03, T-60).
+    // Viewing the queue needs only leads.view; resolving one needs
+    // leads.archive, which the API enforces (T-64).
+    Route::get('/lead-duplicates', [PageController::class, 'leadDuplicates'])
+        ->middleware('permission:leads.view')->name('web.leads.duplicates');
+
     Route::get('/campaigns', [PageController::class, 'campaigns'])
         ->middleware('permission:campaigns.view')->name('web.campaigns');
     Route::get('/campaigns/create', [PageController::class, 'campaignCreate'])
@@ -65,6 +68,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/campaigns/{campaign}', [PageController::class, 'campaign'])
         ->middleware('permission:campaigns.view')->name('web.campaigns.show');
 
+    // Not data-scoped, like the API behind it: a business dashboard is the
+    // organisation-wide view (FR-RPT-03, T-60).
     Route::get('/reports', [PageController::class, 'reports'])
         ->middleware('permission:reports.business')->name('web.reports');
 

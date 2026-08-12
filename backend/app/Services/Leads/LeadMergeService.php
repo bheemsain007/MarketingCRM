@@ -4,6 +4,7 @@ namespace App\Services\Leads;
 
 use App\Enums\ErrorCode;
 use App\Exceptions\ApiException;
+use App\Models\AuditLog;
 use App\Models\Lead;
 use App\Models\LeadActivity;
 use App\Models\User;
@@ -119,6 +120,24 @@ class LeadMergeService
                 'subject_type' => Lead::class,
                 'subject_id' => $duplicate->id,
                 'occurred_at' => now(),
+            ]);
+
+            /*
+             * Audited separately from the timeline. The timeline is what a
+             * telecaller reads; this is the compliance-grade record (SEC-AUD-04),
+             * and a merge is the one lead operation with no undo - so it belongs
+             * in the trail that outlives the lead's own history.
+             */
+            AuditLog::create([
+                'user_id' => $actor?->id,
+                'action' => 'lead_merged',
+                'description' => sprintf('Lead #%d merged into #%d', $duplicate->id, $survivor->id),
+                'new_values' => [
+                    'survivor_id' => $survivor->id,
+                    'merged_lead_id' => $duplicate->id,
+                    'merged_phone' => $duplicate->phone_e164,
+                    'note' => $note,
+                ],
             ]);
 
             return $survivor->refresh();

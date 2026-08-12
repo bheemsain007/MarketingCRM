@@ -81,6 +81,12 @@
     </a>
     @endpermission
 
+    @permission('leads.archive')
+    <a href="{{ route('web.leads.duplicates') }}" class="{{ request()->routeIs('web.leads.duplicates') ? 'active' : '' }}">
+        <i class="bi bi-people me-2"></i>Duplicates
+    </a>
+    @endpermission
+
     @permission('campaigns.view')
     <a href="{{ route('web.campaigns') }}" class="{{ request()->routeIs('web.campaigns*') ? 'active' : '' }}">
         <i class="bi bi-megaphone me-2"></i>Campaigns

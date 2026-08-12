@@ -575,6 +575,34 @@ Filters: `channel`, `status`, `direction`, `campaign_id` (and `lead_id` on the c
 
 **Message status vocabulary**: `queued` · `sent` · `delivered` · `read` · `replied` · `failed` · `bounced` · `skipped`. `bounced` is distinct from `failed` — the first means the provider took it and the address rejected it, the second means we could not hand it over.
 
+### Duplicate review (T-64 — BR-DUP-03/04)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/lead-duplicates` | `leads.view` | Defaults to `pending` |
+| POST | `/api/v1/lead-duplicates/{candidate}/merge` | `leads.archive` | `survivor_id` required |
+| POST | `/api/v1/lead-duplicates/{candidate}/dismiss` | `leads.archive` | `note` required |
+| POST | `/api/v1/lead-duplicates/backfill` | `leads.archive` | Sweeps pre-existing leads |
+
+Filters: `status`, `match_type`. Includes: `lead`, `duplicate`, `resolver`.
+
+**Merging is gated on `leads.archive`, not `leads.update`.** It is irreversible and it takes a
+record out of circulation, which is archiving's authority rather than editing's — and a telecaller
+holds neither.
+
+**`survivor_id` must be one of the two leads in the candidate.** Without that check the endpoint
+would be a merge-any-two-leads primitive reachable by editing one field.
+
+**Both sides are summarised inline**, including `is_suppressed` and `created_at`. The decision is
+"are these the same person?", and a queue that returns two ids sends the reviewer to two other
+screens before they can answer.
+
+**A dismissal requires a note.** It is what stops the pair being raised again, so the next reviewer
+deserves to know why. Dismissals are kept rather than deleted, and the detector checks them.
+
+**Every merge writes an `audit_logs` row** as well as a lead-timeline entry — it is the one lead
+operation with no undo (SEC-AUD-04).
+
 ### Settings and provider credentials
 
 | Method | Path | Permission | Notes |

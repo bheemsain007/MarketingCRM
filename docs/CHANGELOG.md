@@ -4,6 +4,33 @@ All notable changes to this project's specification and implementation. Phases a
 
 ---
 
+## The duplicate review screen - 2026-08-12
+
+The services and the queue existed; nobody could see them. API and screen, 9 tests. **Suite: 708 passing, 0 failing.**
+
+### Both records, side by side
+The decision this queue exists for is "are these the same person?" - and it cannot be made from two ids. Each side shows name, phone, email, company, city, status, **whether it is suppressed**, and how old the record is. The last two usually settle it.
+
+A queue that returned ids would send the reviewer to two other screens before they could answer, which is not a review queue - it is a list of homework.
+
+### The reviewer chooses which record survives
+There is no sensible default. The older lead usually has more history, but the newer one may be the corrected spelling of a name, and only a person looking at both can say. So each side carries its own "keep this one" button.
+
+`survivor_id` must be one of the two leads in the candidate. Without that check the endpoint would be a **merge-any-two-leads primitive** reachable by editing one field in the request.
+
+### Gated on `leads.archive`, not `leads.update`
+Merging is irreversible and it takes a record out of circulation - archiving's authority rather than editing's. A telecaller holds neither, and a test asserts they can neither merge nor dismiss.
+
+Every merge now also writes an `audit_logs` row alongside the lead-timeline entry. The timeline is what a telecaller reads; the audit log is the compliance-grade trail, and a merge is the one lead operation with no undo.
+
+### A dismissal needs a reason
+It is what stops the pair being raised again, so the next person to open the queue deserves to know why. The browser refuses an empty note before the request, and the API refuses it again.
+
+### The sweep is visible, not hidden
+Detection runs on creation, so leads captured before it existed were never checked. That is exposed as a button rather than buried in a console command - the person who needs it is the one looking at an empty queue, wondering whether that means "no duplicates" or "never checked".
+
+---
+
 ## Duplicate review and merge - 2026-08-12
 
 T-64, built. Duplicate handling had stopped at phone since Phase 6: BR-DUP-03 (email as a secondary signal) and BR-DUP-04 (merge) had no implementation at all. 14 tests. **Suite: 699 passing, 0 failing.**

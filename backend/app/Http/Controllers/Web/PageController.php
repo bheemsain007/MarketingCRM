@@ -238,6 +238,17 @@ class PageController extends Controller
      * filters and the channel list cannot drift from what the API accepts -
      * a hardcoded list here would be a second copy of the lifecycle.
      */
+    /**
+     * Duplicate review (T-64, BR-DUP-03/04).
+     *
+     * A pure shell: both sides of each pair arrive from
+     * `/api/v1/lead-duplicates`, so the merge rules have one implementation.
+     */
+    public function leadDuplicates(): View
+    {
+        return view('leads.duplicates');
+    }
+
     public function campaigns(): View
     {
         return view('campaigns.index', [
