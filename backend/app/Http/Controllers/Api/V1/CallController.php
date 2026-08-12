@@ -8,6 +8,7 @@ use App\Http\Requests\Calls\StoreCallRequest;
 use App\Http\Resources\CallResource;
 use App\Models\Call;
 use App\Models\Lead;
+use App\Services\Calls\AiCallService;
 use App\Services\Calls\CallService;
 use App\Support\ApiResponse;
 use App\Support\QueryOptions;
@@ -77,6 +78,28 @@ class CallController extends Controller
         return $outcome !== null
             ? ApiResponse::created(new CallResource($call), 'Call logged.')
             : ApiResponse::accepted(new CallResource($call), 'Call started. Report the outcome when it ends.');
+    }
+
+    /**
+     * Places an AI call through Vaaad (Phase 24, FR-AI-01).
+     *
+     * Same authority as a human dial (`call` on the lead) and the same gate; the
+     * difference is who does the talking. Refused with a clear message when AI
+     * calling has no key configured - keyed it works, unkeyed it does not, and
+     * it says which.
+     */
+    public function aiCall(Request $request, Lead $lead, AiCallService $ai): JsonResponse
+    {
+        $this->authorize('call', $lead);
+
+        $call = $ai->initiate($lead, $request->user(), [
+            'script' => $request->input('script'),
+            'product_id' => $request->input('product_id'),
+        ]);
+
+        $call->load('user');
+
+        return ApiResponse::accepted(new CallResource($call), 'AI call started. The outcome will arrive by webhook.');
     }
 
     public function update(RecordCallOutcomeRequest $request, Call $call): JsonResponse

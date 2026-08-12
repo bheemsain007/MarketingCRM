@@ -47,6 +47,26 @@ return [
             'report' => false,
         ],
 
+        /*
+         * Call recordings (BR-REC-01, SEC-FILE-02/03).
+         *
+         * Deliberately NOT under `storage/app/public` and deliberately without
+         * a `url`: a recording must never be publicly addressable. It is served
+         * only by streaming through an authorised, audited route - so there is
+         * no URL for this disk to hand out, and no symlink pointing at it.
+         *
+         * `RECORDINGS_DISK` can repoint this at s3 later without any code
+         * change; nothing outside config names a path.
+         */
+        'recordings' => [
+            'driver' => 'local',
+            'root' => storage_path('app/recordings'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

@@ -53,3 +53,14 @@ Schedule::command('crm:mark-overdue-payments')
 Schedule::command('crm:decay-lead-scores')
     ->dailyAt('04:15')
     ->withoutOverlapping();
+
+/*
+ * Recording retention (BR-REC-02, FR-REC-05, SEC-PII-05). Retention is the
+ * passage of time, so nothing triggers it on its own - without this sweep the
+ * stated retention period is a sentence in a policy document rather than
+ * something the system does. Off-peak and daily: expiry can only change at a
+ * day boundary, and each run deletes files from disk.
+ */
+Schedule::command('crm:purge-recordings')
+    ->dailyAt('03:30')
+    ->withoutOverlapping();

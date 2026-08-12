@@ -72,6 +72,13 @@ return [
         'api_key' => env('VOICE_API_KEY'),
     ],
 
+    // Phase 19 - inbound keyword opt-out (STOP/UNSUBSCRIBE). Shared secret the
+    // inbound webhook must present; provisional like the other webhook secrets
+    // until a provider's own scheme is confirmed (T-53).
+    'inbound' => [
+        'webhook_secret' => env('INBOUND_WEBHOOK_SECRET'),
+    ],
+
     // Phase 24 - AI calling
     'vaaad' => [
         'api_key' => env('VAAAD_API_KEY'),

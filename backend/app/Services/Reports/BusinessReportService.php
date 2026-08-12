@@ -8,6 +8,7 @@ use App\Enums\LeadTemperature;
 use App\Enums\OpportunityStatus;
 use App\Enums\PaymentStatus;
 use App\Models\Call;
+use App\Models\Campaign;
 use App\Models\FollowUp;
 use App\Models\Lead;
 use App\Models\Message;
@@ -259,6 +260,81 @@ class BusinessReportService
                 )->toArray(),
             ])
             ->all();
+    }
+
+    /**
+     * Campaign performance (FR-RPT-02/05, BR-CAMP-*).
+     *
+     * The piece Phase 27 could not finish until the campaign engine existed
+     * (Phase 18). Scoped to campaigns that **started** in the period - a draft
+     * that never ran has no performance, and including it as a row of zeroes
+     * only pads the report. The figures are the engine's own lifetime counters,
+     * so this report and the campaign detail screen read the same numbers.
+     *
+     * Every ratio carries its denominator (FR-RPT-06). Two are worth naming:
+     *   - `delivery_rate` is over messages *sent*, not targeted - a recipient
+     *     skipped by the DNC gate was never sent to, and counting them against
+     *     delivery would blame the campaign for obeying a suppression.
+     *   - `skip_rate` is over *targeted*, because "how much of the audience did
+     *     we refuse to contact" is exactly a question about the whole audience.
+     *
+     * Delivery figures depend on a provider webhook (FR-COMM-03); on the unkeyed
+     * channels nothing confirms delivery, so `delivered` stays 0 and the rate
+     * reads a truthful 0%, not a hidden gap.
+     *
+     * @return array<string, mixed>
+     */
+    public function campaignPerformance(ReportPeriod $period): array
+    {
+        [$from, $to] = $period->bounds();
+
+        $campaigns = Campaign::query()
+            ->whereBetween('started_at', [$from, $to])
+            ->orderByDesc('started_at')
+            ->get();
+
+        $rows = $campaigns->map(fn (Campaign $c) => [
+            'campaign_id' => $c->id,
+            'name' => $c->name,
+            'channel' => $c->channel->value,
+            'channel_label' => $c->channel->label(),
+            'status' => $c->status->value,
+            'started_at' => $c->started_at?->toIso8601String(),
+            'completed_at' => $c->completed_at?->toIso8601String(),
+
+            'targeted' => $c->total_targeted,
+            'queued' => $c->total_queued,
+            'sent' => $c->total_sent,
+            'delivered' => $c->total_delivered,
+            'failed' => $c->total_failed,
+            'skipped' => $c->total_skipped,
+
+            'send_rate' => Rate::of($c->total_sent, $c->total_targeted, 'recipients targeted')->toArray(),
+            'delivery_rate' => Rate::of($c->total_delivered, $c->total_sent, 'messages sent')->toArray(),
+            'failure_rate' => Rate::of($c->total_failed, $c->total_sent, 'messages sent')->toArray(),
+            'skip_rate' => Rate::of($c->total_skipped, $c->total_targeted, 'recipients targeted')->toArray(),
+
+            'cost' => round((float) $c->cost, 2),
+            'currency' => $c->currency,
+        ])->all();
+
+        return [
+            'campaigns' => $rows,
+            // Period roll-up, from the same rows - so the header and the table
+            // can never disagree. Costs are summed; the outcome counts are not
+            // rolled into a single rate, because averaging rates across
+            // campaigns of different sizes is its own classic lie.
+            'totals' => [
+                'campaigns' => $campaigns->count(),
+                'targeted' => (int) $campaigns->sum('total_targeted'),
+                'sent' => (int) $campaigns->sum('total_sent'),
+                'delivered' => (int) $campaigns->sum('total_delivered'),
+                'failed' => (int) $campaigns->sum('total_failed'),
+                'skipped' => (int) $campaigns->sum('total_skipped'),
+                'cost' => round((float) $campaigns->sum(fn (Campaign $c) => (float) $c->cost), 2),
+                'currency' => 'INR',
+            ],
+        ];
     }
 
     // -----------------------------------------------------------------------

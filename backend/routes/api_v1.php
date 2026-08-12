@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\CallController;
+use App\Http\Controllers\Api\V1\CallRecordingController;
 use App\Http\Controllers\Api\V1\CampaignController;
 use App\Http\Controllers\Api\V1\DialerController;
 use App\Http\Controllers\Api\V1\DncController;
@@ -201,6 +202,11 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('leads')->g
     Route::post('/{lead}/calls', [CallController::class, 'store'])
         ->middleware('permission:calls.create')->name('api.v1.leads.calls.store');
 
+    // AI calling through Vaaad (Phase 24): same authority and gate as a human
+    // dial, refused with a clear message when no Vaaad key is configured.
+    Route::post('/{lead}/ai-call', [CallController::class, 'aiCall'])
+        ->middleware('permission:calls.create')->name('api.v1.leads.ai-call');
+
     // Assignment - supervisory, separate permission
     Route::post('/{lead}/assign', [LeadAssignmentController::class, 'assign'])
         ->middleware('permission:leads.assign')->name('api.v1.leads.assign');
@@ -271,6 +277,8 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('reports')-
         ->middleware('permission:reports.business')->name('api.v1.reports.products');
     Route::get('/sources', [ReportController::class, 'sources'])
         ->middleware('permission:reports.business')->name('api.v1.reports.sources');
+    Route::get('/campaigns', [ReportController::class, 'campaigns'])
+        ->middleware('permission:reports.business')->name('api.v1.reports.campaigns');
 });
 
 /*
@@ -457,6 +465,15 @@ Route::middleware('throttle:api-webhook')->prefix('webhooks')->group(function ()
     Route::post('/mailercloud', [WebhookController::class, 'mailercloud'])
         ->name('api.v1.webhooks.mailercloud');
 
+    // Inbound keyword opt-out (BR-DNC-05/07): a lead replies STOP and is
+    // suppressed. Generic across the text channels; the channel is in the body.
+    Route::post('/inbound', [WebhookController::class, 'inbound'])
+        ->name('api.v1.webhooks.inbound');
+
+    // Vaaad AI-call result (Phase 25): the outcome and any interest signal.
+    Route::post('/vaaad', [WebhookController::class, 'vaaad'])
+        ->name('api.v1.webhooks.vaaad');
+
     /*
      * Meta uses one path for both: a GET carrying the subscription challenge,
      * and POSTs carrying leadgen notifications (SEC-WH-02).
@@ -504,6 +521,11 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('dnc')->gro
     Route::get('/', [DncController::class, 'index'])
         ->middleware('permission:dnc.view')->name('api.v1.dnc.index');
 
+    // Aggregate skip reporting (BR-DNC-05). Registered before any wildcard so
+    // "skips" is never bound as a route parameter.
+    Route::get('/skips', [DncController::class, 'skips'])
+        ->middleware('permission:dnc.view')->name('api.v1.dnc.skips');
+
     Route::post('/', [DncController::class, 'store'])
         ->middleware('permission:dnc.create')->name('api.v1.dnc.store');
 
@@ -525,6 +547,24 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('calls')->g
 
     Route::patch('/{call}', [CallController::class, 'update'])
         ->middleware('permission:calls.create')->name('api.v1.calls.update');
+
+    /*
+     * Recordings (Phase 11, FR-REC-02..05, BR-REC-01).
+     *
+     * Upload is gated like the call outcome it accompanies - the device posts
+     * as the telecaller who made the call. Reading is gated on
+     * `recordings.listen`, which is audited (SEC-FILE-04), and the audio route
+     * is additionally SIGNED so a leaked URL expires (SEC-FILE-03).
+     */
+    Route::post('/{call}/recording', [CallRecordingController::class, 'store'])
+        ->middleware('permission:calls.create')->name('api.v1.calls.recording.store');
+
+    Route::get('/{call}/recording', [CallRecordingController::class, 'show'])
+        ->middleware('permission:recordings.listen')->name('api.v1.calls.recording.show');
+
+    Route::get('/{call}/recording/audio', [CallRecordingController::class, 'audio'])
+        ->middleware(['signed', 'permission:recordings.listen'])
+        ->name('api.v1.calls.recording.audio');
 });
 
 /*

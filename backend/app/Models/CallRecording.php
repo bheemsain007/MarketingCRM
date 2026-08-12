@@ -90,4 +90,22 @@ class CallRecording extends Model
     {
         return $this->upload_status === 'unavailable';
     }
+
+    /**
+     * Whether there is audio to play right now.
+     *
+     * False covers three different histories - never captured, still uploading,
+     * and purged on retention (BR-REC-02) - which the API reports separately via
+     * `upload_status`. Playback only cares that there are no bytes to serve.
+     */
+    public function isPlayable(): bool
+    {
+        return $this->upload_status === 'uploaded' && $this->storage_path !== null;
+    }
+
+    /** Audio deleted by the retention sweep; the row survives as the record. */
+    public function isPurged(): bool
+    {
+        return $this->upload_status === 'purged';
+    }
 }

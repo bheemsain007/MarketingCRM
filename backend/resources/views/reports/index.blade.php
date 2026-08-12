@@ -96,6 +96,30 @@
                 </div>
             </div>
         </div>
+
+        {{-- Campaign performance (FR-RPT-02/05). Delivery is over messages sent,
+             skip over the audience targeted - the API owns those definitions,
+             this only draws them, denominator and all (FR-RPT-06). --}}
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header py-2"><span class="small fw-semibold">Campaign performance</span></div>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                        <tr class="small">
+                            <th>Campaign</th><th>Channel</th>
+                            <th class="text-end">Targeted</th><th class="text-end">Sent</th>
+                            <th class="text-end">Delivery</th><th class="text-end">Skipped</th>
+                            <th class="text-end">Cost</th>
+                        </tr>
+                        </thead>
+                        <tbody id="campaign-rows">
+                        <tr><td colspan="7" class="text-center text-muted py-4">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 @endsection
 
@@ -253,6 +277,41 @@ $(function () {
                     + '<td class="text-end">' + money(p.collected) + '</td>'
                     + '</tr>').join('')
                 : '<tr><td colspan="3" class="text-center text-muted py-4">No payments in this period.</td></tr>');
+        });
+
+        $.getJSON('/api/v1/reports/campaigns', params()).done(function (response) {
+            const campaigns = response.data.campaigns.campaigns || [];
+            const totals = response.data.campaigns.totals;
+
+            if (!campaigns.length) {
+                $('#campaign-rows').html('<tr><td colspan="7" class="text-center text-muted py-4">'
+                    + 'No campaigns ran in this period.</td></tr>');
+                return;
+            }
+
+            const rows = campaigns.map(c => '<tr>'
+                + '<td>' + CRM.escape(c.name) + '</td>'
+                + '<td class="small">' + CRM.escape(c.channel_label) + '</td>'
+                + '<td class="text-end">' + c.targeted + '</td>'
+                + '<td class="text-end">' + c.sent + '</td>'
+                + '<td class="text-end small">' + rate(c.delivery_rate) + '</td>'
+                + '<td class="text-end small">' + rate(c.skip_rate) + '</td>'
+                + '<td class="text-end">' + money(c.cost) + '</td>'
+                + '</tr>').join('');
+
+            // A totals row, so the marketing spend for the period is one glance
+            // away. Booked/collected-style summing is not a risk here - these
+            // are counts and one cost column.
+            const footer = '<tr class="table-light fw-semibold">'
+                + '<td>' + totals.campaigns + ' campaigns</td><td></td>'
+                + '<td class="text-end">' + totals.targeted + '</td>'
+                + '<td class="text-end">' + totals.sent + '</td>'
+                + '<td></td>'
+                + '<td class="text-end">' + totals.skipped + '</td>'
+                + '<td class="text-end">' + money(totals.cost) + '</td>'
+                + '</tr>';
+
+            $('#campaign-rows').html(rows + footer);
         });
     }
 

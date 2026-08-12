@@ -48,7 +48,10 @@ class CallService
      */
     public function initiate(Lead $lead, User $actor, array $options = []): Call
     {
-        $this->guardCallable($lead);
+        // AI calling dials the same lead through the same gate but on its own
+        // channel (Phase 24): a lead suppressed for AI calls specifically must
+        // be stopped here, not only one suppressed for human calls.
+        $this->guardCallable($lead, $options['channel'] ?? Channel::Call);
 
         return DB::transaction(function () use ($lead, $actor, $options) {
             $call = Call::create([
@@ -199,11 +202,24 @@ class CallService
     // -----------------------------------------------------------------------
 
     /**
+     * Public gate check, so a caller that places the call elsewhere (AI calling
+     * through Vaaad, Phase 24) can refuse a suppressed or out-of-hours lead
+     * BEFORE spending a provider request - rather than placing the call and then
+     * discovering it should not have.
+     *
+     * @throws ApiException
+     */
+    public function assertCallable(Lead $lead, Channel $channel = Channel::Call): void
+    {
+        $this->guardCallable($lead, $channel);
+    }
+
+    /**
      * Everything that must be true before a number is dialled.
      *
      * @throws ApiException
      */
-    private function guardCallable(Lead $lead): void
+    private function guardCallable(Lead $lead, Channel $channel = Channel::Call): void
     {
         if ($lead->trashed()) {
             throw new ApiException(ErrorCode::LeadArchived);
@@ -225,7 +241,7 @@ class CallService
          * suppressed lead being dialled is a regulatory problem, not a bug
          * report.
          */
-        if (! $this->dnc->canContact($lead, Channel::Call)) {
+        if (! $this->dnc->canContact($lead, $channel)) {
             throw new ApiException(
                 ErrorCode::DncSuppressed,
                 'This lead is on the do-not-contact list for calls.',

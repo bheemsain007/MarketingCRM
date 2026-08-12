@@ -281,6 +281,13 @@ return [
         'retention_days' => (int) env('RECORDINGS_RETENTION_DAYS', 365),
         // Lifetime of a signed recording URL (SEC-FILE-03).
         'signed_url_minutes' => (int) env('RECORDINGS_SIGNED_URL_MINUTES', 10),
+        /*
+         * Upload cap, in KB. 25 MB holds roughly an hour of the low-bitrate
+         * mono the handset produces, so it bounds abuse without truncating a
+         * genuinely long call. Shared hosting also caps this independently via
+         * upload_max_filesize (T-03), and the smaller of the two wins.
+         */
+        'max_file_kb' => (int) env('RECORDINGS_MAX_FILE_KB', 25600),
     ],
 
     /*

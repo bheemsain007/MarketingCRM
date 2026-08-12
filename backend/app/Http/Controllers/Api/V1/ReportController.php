@@ -94,4 +94,21 @@ class ReportController extends Controller
             'sources' => $this->reports->sourcePerformance($period),
         ], 'Report generated.');
     }
+
+    /**
+     * Campaign performance (FR-RPT-02/05).
+     *
+     * The report Phase 27 left open until the campaign engine (Phase 18) could
+     * feed it. Marketing ROI - reach, delivery, and what the campaign refused to
+     * send - is deliberately separate from telecaller incentives (T-25).
+     */
+    public function campaigns(Request $request): JsonResponse
+    {
+        $period = ReportPeriod::fromRequest($request);
+
+        return ApiResponse::success([
+            'period' => $period->toArray(),
+            'campaigns' => $this->reports->campaignPerformance($period),
+        ], 'Report generated.');
+    }
 }

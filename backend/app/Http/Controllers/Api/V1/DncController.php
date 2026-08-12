@@ -12,8 +12,10 @@ use App\Http\Resources\DncEntryResource;
 use App\Models\DncEntry;
 use App\Models\Lead;
 use App\Services\Dnc\DncService;
+use App\Services\Reports\SuppressionReportService;
 use App\Support\ApiResponse;
 use App\Support\QueryOptions;
+use App\Support\Reporting\ReportPeriod;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -74,6 +76,31 @@ class DncController extends Controller
         $entries = $options->applyTo($query)->paginate($options->perPage());
 
         return ApiResponse::paginated(DncEntryResource::collection($entries), 'Suppression entries retrieved.');
+    }
+
+    /**
+     * Skip / suppression reporting (BR-DNC-05, FR-DNC-03).
+     *
+     * A send refused because a lead is suppressed must be visible, not a silent
+     * nothing - this aggregates every such skip in the period by channel and
+     * reason, plus a snapshot of who is on the list now.
+     *
+     * Unlike `index`, this is NOT data-scoped: these are non-identifying
+     * aggregate counts, not the per-lead do-not-contact list, so the
+     * SEC-AUTHZ-03 concern that scopes the list does not apply. It stays on
+     * `dnc.view` because it is DNC-domain data; tighten to a Manager-only gate
+     * later if the org-wide totals are judged sensitive.
+     */
+    public function skips(Request $request, SuppressionReportService $reports): JsonResponse
+    {
+        $this->authorize('viewAny', DncEntry::class);
+
+        $period = ReportPeriod::fromRequest($request);
+
+        return ApiResponse::success([
+            'period' => $period->toArray(),
+            'report' => $reports->report($period),
+        ], 'Suppression report generated.');
     }
 
     /**

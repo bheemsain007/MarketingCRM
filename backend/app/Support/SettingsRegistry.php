@@ -147,6 +147,10 @@ class SettingsRegistry
                 'Vendor not chosen (T-33).'),
             self::credential('providers.voice.api_key', 'voice', 'Voice API key', 'secret'),
 
+            // Phase 19 - inbound keyword opt-out (BR-DNC-05/07)
+            self::credential('providers.inbound.webhook_secret', 'dnc', 'Inbound webhook secret', 'secret',
+                'Presented as X-Webhook-Token on inbound STOP callbacks. Until it is set, the inbound endpoint refuses everything.'),
+
             // Phase 24
             self::credential('providers.vaaad.api_key', 'ai_calling', 'Vaaad API key', 'secret'),
             self::credential('providers.vaaad.webhook_secret', 'ai_calling', 'Vaaad webhook secret', 'secret'),
@@ -225,6 +229,7 @@ class SettingsRegistry
             'voice' => 'Voice',
             'ai_calling' => 'AI calling (Vaaad)',
             'payment' => 'Payment gateway',
+            'dnc' => 'Inbound opt-out',
             default => ucfirst($group),
         };
     }
