@@ -1,0 +1,40 @@
+name: marketing_crm_mobile
+description: "Marketing CRM — Android client for telecallers (Phase 30)."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.8
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # Transport. Deliberately the low-level client: ApiClient owns the envelope,
+  # so an interceptor framework would only hide where errors are decided.
+  http: ^1.2.2
+
+  # Bearer token at rest — Android Keystore-backed (SEC: never SharedPreferences).
+  flutter_secure_storage: ^9.2.4
+
+  # ADR-B: the DEVICE dials. This app never places a VoIP call.
+  url_launcher: ^6.3.1
+
+  # Offline outbox: know when to flush.
+  connectivity_plus: ^6.1.0
+
+  # Outbox persistence. Not secure storage: queued call outcomes are business
+  # data the server already holds, and secure storage is a poor queue.
+  shared_preferences: ^2.3.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
