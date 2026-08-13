@@ -11,6 +11,8 @@ use App\Models\Message;
 use App\Models\ProviderWebhookLog;
 use App\Services\Calls\AiCallService;
 use App\Services\Dnc\DncService;
+use App\Services\Payments\PaymentGatewayManager;
+use App\Services\Payments\PaymentLinkService;
 use App\Services\Settings\SettingsService;
 use App\Support\PhoneNumber;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -225,6 +227,96 @@ class WebhookController extends Controller
         $log->update(['processed_at' => now()]);
 
         return Response::json(['success' => true, 'message' => 'Processed.']);
+    }
+
+    /**
+     * Gateway collection callback (Phase 23, FR-PAY-02, T-59).
+     *
+     * The one webhook here whose signature scheme is NOT provisional: Razorpay
+     * documents a hex HMAC-SHA256 of the raw body under `X-Razorpay-Signature`,
+     * and the gateway class verifies exactly that. Everything else follows the
+     * house pattern - logged before it is acted on, unique
+     * `(provider, provider_event_id)` absorbing redeliveries, nothing in the
+     * payload permitted to create a record.
+     *
+     * The stakes are higher than for a delivery receipt, so the failure
+     * directions are chosen accordingly. No secret configured means every
+     * request is rejected, because an unsigned endpoint that can mark payments
+     * paid is a way to settle any sale in the system by POSTing to it. And an
+     * event that does not match a link we issued is acknowledged rather than
+     * guessed at: the full payload is in `provider_webhook_logs` for a human to
+     * reconcile, which is recoverable, whereas applying money to the wrong
+     * payment is not.
+     */
+    public function payment(Request $request, PaymentGatewayManager $gateways, PaymentLinkService $links): JsonResponse
+    {
+        $gateway = $gateways->gateway();
+        $provider = $gateway?->name() ?? 'payment';
+
+        try {
+            $log = ProviderWebhookLog::create([
+                'provider' => $provider,
+                'event_type' => (string) $request->input('event', 'unknown'),
+                // Razorpay's own event id header; the body id is the fallback so
+                // the replay guard still has something to key on.
+                'provider_event_id' => $request->header('X-Razorpay-Event-Id') ?? $request->input('id'),
+                'payload' => $request->all(),
+                'headers' => ['user-agent' => $request->userAgent()],
+                'signature_valid' => false,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // SEC-WH-03: this delivery has been seen. Money is applied once.
+            return Response::json(['success' => true, 'message' => 'Already processed.']);
+        }
+
+        // The null check is first so the gateway itself names the header it
+        // signs with: a scheme is a property of the provider, not of this
+        // controller, and hard-coding one here would silently verify nothing
+        // the day T-34 is revisited.
+        if ($gateway === null || ! $gateway->verifySignature(
+            $request->getContent(),
+            $request->header($gateway->signatureHeader()),
+        )) {
+            $log->update([
+                'processed_at' => now(),
+                'processing_error' => 'Invalid or missing signature.',
+            ]);
+
+            return Response::json(['success' => false, 'message' => 'Invalid signature.'], 401);
+        }
+
+        $log->update(['signature_valid' => true]);
+
+        $event = $gateway->parseEvent($request->all());
+
+        if ($event === null) {
+            // Recognised as ours, but not an event that moves money. Recorded as
+            // unhandled rather than guessed at - a misread gateway event
+            // rewrites the ledger, and BR-PAY-02 is not a place to improvise.
+            $log->update(['processed_at' => now(), 'processing_error' => 'Unhandled event type.']);
+
+            return Response::json(['success' => true, 'message' => 'No action.']);
+        }
+
+        $outcome = $links->applyEvent($event, $gateway);
+
+        $log->update([
+            'processed_at' => now(),
+            'processing_error' => match ($outcome) {
+                PaymentLinkService::OUTCOME_APPLIED => null,
+                PaymentLinkService::OUTCOME_DUPLICATE => 'Already applied.',
+                PaymentLinkService::OUTCOME_UNKNOWN_LINK => 'No matching payment link.',
+                default => 'Refused by the payment status matrix.',
+            },
+        ]);
+
+        // Always 200 once the signature is good. A gateway that gets an error
+        // retries for hours over a state we have already decided about, and a
+        // retry storm is how a "no matching link" becomes an outage.
+        return Response::json([
+            'success' => true,
+            'message' => $outcome === PaymentLinkService::OUTCOME_APPLIED ? 'Processed.' : 'No action.',
+        ]);
     }
 
     private function resolveMessage(Request $request): ?Message

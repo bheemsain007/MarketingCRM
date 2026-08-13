@@ -155,13 +155,17 @@ class SettingsRegistry
             self::credential('providers.vaaad.api_key', 'ai_calling', 'Vaaad API key', 'secret'),
             self::credential('providers.vaaad.webhook_secret', 'ai_calling', 'Vaaad webhook secret', 'secret'),
 
-            // Phase 23 - gateway not chosen (T-34)
+            // Phase 23 - Razorpay is the default (T-34); the others are listed
+            // but have no driver, and selecting one refuses rather than
+            // silently collecting through Razorpay instead.
             self::credential('providers.payment.gateway', 'payment', 'Payment gateway', 'select',
-                'Not yet chosen (T-34).',
+                'Razorpay is the default and the only one implemented (T-34).',
                 ['razorpay', 'payu', 'stripe', 'other']),
-            self::credential('providers.payment.key_id', 'payment', 'Key ID', 'string'),
+            self::credential('providers.payment.key_id', 'payment', 'Key ID', 'string',
+                'Razorpay: the public key id (rzp_live_...). Until this and the secret are set, payment links refuse.'),
             self::credential('providers.payment.key_secret', 'payment', 'Key secret', 'secret'),
-            self::credential('providers.payment.webhook_secret', 'payment', 'Webhook signing secret', 'secret'),
+            self::credential('providers.payment.webhook_secret', 'payment', 'Webhook signing secret', 'secret',
+                'The secret entered in the gateway dashboard when subscribing the webhook. Until it is set, the collection endpoint rejects everything - an unsigned endpoint that can mark payments paid would settle any sale in the system.'),
         ];
     }
 

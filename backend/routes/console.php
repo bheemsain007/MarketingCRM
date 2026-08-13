@@ -17,6 +17,21 @@ Artisan::command('inspire', function () {
 | rather than a visible bug - so it is listed in the deployment checklist.
 */
 
+/*
+ * Proof of life for the cron entry itself (DEPLOYMENT §5, §9).
+ *
+ * Listed FIRST because every other line below depends on it being true. A
+ * missing cron entry is silent: nothing errors, work simply never happens, and
+ * two retention purges stop running with no signal anywhere (SEC-PII-05). This
+ * writes a timestamp every minute so that absence becomes the alarm -
+ * `crm:production-check` and GET /up/scheduler both read it.
+ *
+ * NOT `withoutOverlapping`: the whole point is that it runs, and an overlap
+ * lock that got stuck would suppress exactly the signal being monitored. The
+ * write is a single cache key, so a genuine overlap is harmless.
+ */
+Schedule::command('crm:scheduler-heartbeat')->everyMinute();
+
 // Retention on uploaded lead files (SEC-PII-05). Runs off-peak; deleting a
 // few files is cheap, but it reads a table the import path also writes.
 Schedule::command('leads:purge-import-files')

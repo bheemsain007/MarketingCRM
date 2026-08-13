@@ -26,6 +26,10 @@ use Laravel\Sanctum\HasApiTokens;
  * @property string $email
  * @property Carbon|null $email_verified_at
  * @property string $password
+ * @property string|null $two_factor_secret
+ * @property array<int, string>|null $two_factor_recovery_codes
+ * @property Carbon|null $two_factor_confirmed_at
+ * @property int|null $two_factor_last_timestep
  * @property string|null $phone_e164
  * @property string $timezone
  * @property bool $is_active
@@ -64,6 +68,12 @@ class User extends Authenticatable
     protected $hidden = [
         'password',
         'remember_token',
+        // A TOTP secret is a password equivalent - anyone holding it can mint
+        // valid codes for ever (SEC-AUTH-07). It must never reach a JSON
+        // response, and hiding it here covers every resource that has not
+        // thought about it yet.
+        'two_factor_secret',
+        'two_factor_recovery_codes',
     ];
 
     protected function casts(): array
@@ -73,7 +83,26 @@ class User extends Authenticatable
             'last_login_at' => 'datetime',
             'password' => 'hashed',
             'is_active' => 'boolean',
+            // Encrypted at rest with APP_KEY (SEC-PII-02, SEC-CFG-06): a
+            // database backup or a read-only SQL injection must not hand over
+            // a second factor. `two_factor_recovery_codes` holds HASHES, and is
+            // still encrypted - defence in depth costs one cast here.
+            'two_factor_secret' => 'encrypted',
+            'two_factor_recovery_codes' => 'encrypted:array',
+            'two_factor_confirmed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Whether this account must pass a second factor to sign in (SEC-AUTH-07).
+     *
+     * Confirmation, not the mere presence of a secret: an enrolment abandoned
+     * halfway leaves a secret behind, and treating that as enabled would lock
+     * the user out with no device that produces a working code.
+     */
+    public function hasTwoFactorEnabled(): bool
+    {
+        return $this->two_factor_secret !== null && $this->two_factor_confirmed_at !== null;
     }
 
     public function team(): BelongsTo

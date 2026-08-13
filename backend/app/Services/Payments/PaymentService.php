@@ -33,8 +33,12 @@ class PaymentService
      * constraint would happily accept it.
      *
      * @param  array<string, mixed>  $data
+     * @param  bool  $awaitingGateway  the payment exists only to be collected
+     *                                 online and no money has arrived yet - see
+     *                                 openingStatus() for why this is a code
+     *                                 argument and not a request field
      */
-    public function record(Sale $sale, array $data, ?int $actorId = null): Payment
+    public function record(Sale $sale, array $data, ?int $actorId = null, bool $awaitingGateway = false): Payment
     {
         $amount = round((float) ($data['amount'] ?? 0), 2);
 
@@ -43,7 +47,7 @@ class PaymentService
         }
 
         $productId = $this->resolveProductId($sale, $data);
-        $status = $this->openingStatus($sale, $amount, $data);
+        $status = $this->openingStatus($sale, $amount, $data, $awaitingGateway);
 
         return DB::transaction(function () use ($sale, $data, $amount, $productId, $status, $actorId) {
             $payment = Payment::create([
@@ -148,6 +152,50 @@ class PaymentService
     }
 
     /**
+     * What a payment that has just been collected should become: `Paid` if it
+     * settles what is still outstanding on the sale, `Partial` otherwise.
+     *
+     * The same derivation `openingStatus()` uses, exposed because a
+     * gateway-collected payment learns it was paid LATER, by webhook, and the
+     * answer has to be recomputed against the balance at that moment rather
+     * than the one when the link was issued. Two instalment links generated on
+     * the same afternoon would otherwise both claim to settle the sale.
+     */
+    public function settlementStatusFor(Payment $payment): PaymentStatus
+    {
+        $sale = $payment->sale;
+
+        if ($sale === null) {
+            return PaymentStatus::Paid;
+        }
+
+        // The payment is still Pending here, so it is not in `collected()` and
+        // does not net itself out of the outstanding figure.
+        return (float) $payment->amount >= $this->balanceFor($sale)
+            ? PaymentStatus::Paid
+            : PaymentStatus::Partial;
+    }
+
+    /**
+     * Stamps the gateway's own payment id onto the record.
+     *
+     * Kept here rather than in the link service because `gateway_payment_id` is
+     * outside `$fillable` and the unique `(gateway, gateway_payment_id)` pair is
+     * a ledger guarantee - this service is the exception to mass-assignment
+     * protection on `payments`, and having a second one would make the rule
+     * decorative.
+     */
+    public function attachGatewayPayment(Payment $payment, string $gateway, ?string $gatewayPaymentId): Payment
+    {
+        $payment->forceFill([
+            'gateway' => $gateway,
+            'gateway_payment_id' => $gatewayPaymentId,
+        ])->save();
+
+        return $payment;
+    }
+
+    /**
      * BR-PAY-04: balance = sale value - sum of non-failed, non-refunded payments.
      *
      * Computed, never stored. A stored balance is a second source of truth that
@@ -193,9 +241,33 @@ class PaymentService
      * sale reports as settled.
      *
      * @param  array<string, mixed>  $data
+     * @param  bool  $awaitingGateway  a payment generated to back an online link
      */
-    private function openingStatus(Sale $sale, float $amount, array $data): PaymentStatus
-    {
+    private function openingStatus(
+        Sale $sale,
+        float $amount,
+        array $data,
+        bool $awaitingGateway = false,
+    ): PaymentStatus {
+        /*
+         * A payment link is an INVITATION to pay. Without this clause the
+         * derivation below would look at an amount that settles the sale and
+         * open the row as `Paid` - so merely generating a link would settle the
+         * balance and satisfy BR-PAY-05, letting the lead be converted before
+         * anybody had paid anything. The link path therefore forces Pending and
+         * waits for the gateway's callback to move it, which is the only event
+         * that actually means money arrived.
+         *
+         * It is a code argument rather than a `$data` key on purpose: it must
+         * not be reachable from a request body. The direction is safe (it can
+         * only ever UNDERSTATE collection), but a caller-settable status field
+         * is what BR-PAY-02 exists to prevent, and one exception is how that
+         * becomes two.
+         */
+        if ($awaitingGateway) {
+            return PaymentStatus::Pending;
+        }
+
         // A future-dated instalment is a commitment, not a receipt - it becomes
         // Partial or Paid when the money actually arrives, and Overdue if it
         // does not (BR-PAY-06).

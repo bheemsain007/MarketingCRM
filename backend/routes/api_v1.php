@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\QuotationController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\SettingsController;
+use App\Http\Controllers\Api\V1\TwoFactorAdminController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\WebhookController;
 use Illuminate\Support\Facades\Route;
@@ -51,6 +52,13 @@ use Illuminate\Support\Facades\Route;
 Route::get('/health', [HealthController::class, 'index'])
     ->middleware('throttle:api-standard')
     ->name('api.v1.health');
+
+// Scheduler liveness on its own endpoint (DEPLOYMENT §5, §9): a dead cron is a
+// real outage, but a different one from "the site is down", and it deserves its
+// own alert rather than reporting the whole service offline.
+Route::get('/health/scheduler', [HealthController::class, 'scheduler'])
+    ->middleware('throttle:api-standard')
+    ->name('api.v1.health.scheduler');
 
 /*
 |--------------------------------------------------------------------------
@@ -246,6 +254,16 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('users')->g
     // Super Admin only. `roles.manage` is in Permission::isAudited().
     Route::put('/{user}/roles', [UserController::class, 'setRoles'])
         ->middleware('permission:roles.manage')->name('api.v1.users.roles');
+
+    /*
+     * Break-glass 2FA reset (SEC-AUTH-07, T-09). Gated on `roles.manage` -
+     * which only Super Admin holds - because clearing somebody's second factor
+     * is a privilege change, not user maintenance: it is the one action that
+     * lets an operator turn a colleague's account into one they can enter.
+     * The service re-checks Super Admin and refuses self-service.
+     */
+    Route::delete('/{user}/two-factor', [TwoFactorAdminController::class, 'destroy'])
+        ->middleware('permission:roles.manage')->name('api.v1.users.two-factor.reset');
 });
 
 /*
@@ -330,11 +348,16 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () 
 
 /*
 |--------------------------------------------------------------------------
-| Payments (Phase 23 - offline half; the gateway needs T-34 named)
+| Payments (Phase 23 - offline and online halves; Razorpay is T-34's default)
 |--------------------------------------------------------------------------
 | Scoped through the lead. `payments.refund` is a separate permission checked
 | inside the controller, because one transition endpoint serves every move and
 | only one of them sends money back out (SEC-AUTHZ-06).
+|
+| The payment link carries `payments.manage`, the same gate as recording money
+| by hand: issuing one is asking a customer to pay, not collecting from them.
+| It cannot settle a balance - the payment it creates stays Pending until the
+| gateway's callback arrives (FR-PAY-02).
 */
 Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () {
     Route::get('/payments', [PaymentController::class, 'index'])
@@ -344,6 +367,9 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () 
         ->middleware('permission:payments.view')->name('api.v1.sales.payments.index');
     Route::post('/sales/{sale}/payments', [PaymentController::class, 'store'])
         ->middleware('permission:payments.manage')->name('api.v1.sales.payments.store');
+
+    Route::post('/sales/{sale}/payment-link', [PaymentController::class, 'paymentLink'])
+        ->middleware('permission:payments.manage')->name('api.v1.sales.payment-link.store');
 
     Route::patch('/payments/{payment}', [PaymentController::class, 'transition'])
         ->middleware('permission:payments.manage')->name('api.v1.payments.transition');
@@ -473,6 +499,16 @@ Route::middleware('throttle:api-webhook')->prefix('webhooks')->group(function ()
     // Vaaad AI-call result (Phase 25): the outcome and any interest signal.
     Route::post('/vaaad', [WebhookController::class, 'vaaad'])
         ->name('api.v1.webhooks.vaaad');
+
+    /*
+     * Gateway collection (Phase 23, FR-PAY-02). Link paid, failed or refunded.
+     *
+     * Gateway-agnostic path: the configured gateway decides which header to
+     * verify and how, so pointing Razorpay's dashboard at it now does not mean
+     * a new URL if T-34 is ever revisited.
+     */
+    Route::post('/payment', [WebhookController::class, 'payment'])
+        ->name('api.v1.webhooks.payment');
 
     /*
      * Meta uses one path for both: a GET carrying the subscription challenge,

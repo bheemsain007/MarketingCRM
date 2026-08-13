@@ -4,6 +4,7 @@ use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\LoginController;
 use App\Http\Controllers\Web\PageController;
 use App\Http\Controllers\Web\PasswordResetController;
+use App\Http\Controllers\Web\TwoFactorController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -58,11 +59,48 @@ Route::post('/logout', [LoginController::class, 'destroy'])
     ->middleware('auth')
     ->name('web.logout');
 
+/*
+ * Second-factor challenge (SEC-AUTH-07, T-09).
+ *
+ * Behind `auth` but NOT behind RequireTwoFactorChallenge's redirect - a pending
+ * session IS authenticated, and the middleware allow-lists these two names, or
+ * the only page the user is permitted to reach would redirect to itself.
+ *
+ * Throttled on the same limiter as login: a six-digit code is 10^6 guesses, and
+ * an unthrottled challenge form turns 2FA into a slow password (SEC-AUTH-03).
+ */
+Route::middleware('auth')->group(function () {
+    Route::get('/two-factor-challenge', [TwoFactorController::class, 'challenge'])
+        ->name('web.two-factor.challenge');
+    Route::post('/two-factor-challenge', [TwoFactorController::class, 'verify'])
+        ->middleware('throttle:api-auth')
+        ->name('web.two-factor.verify');
+});
+
 Route::middleware('auth')->group(function () {
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('web.dashboard');
 
     // No permission gate: changing your own password is not a privilege.
     Route::get('/account', [PageController::class, 'account'])->name('web.account');
+
+    /*
+     * Own-account 2FA (SEC-AUTH-07). No permission gate for the same reason the
+     * password form has none: securing your own account is not a privilege.
+     * Eligibility - Admin and Super Admin - is decided by TwoFactorService, so
+     * the page renders an explanation for everyone else rather than a 403.
+     */
+    Route::get('/account/two-factor', [TwoFactorController::class, 'show'])
+        ->name('web.account.two-factor');
+    Route::post('/account/two-factor', [TwoFactorController::class, 'begin'])
+        ->name('web.account.two-factor.begin');
+    Route::post('/account/two-factor/confirm', [TwoFactorController::class, 'confirm'])
+        ->middleware('throttle:api-auth')
+        ->name('web.account.two-factor.confirm');
+    Route::post('/account/two-factor/recovery-codes', [TwoFactorController::class, 'regenerate'])
+        ->name('web.account.two-factor.recovery');
+    Route::post('/account/two-factor/disable', [TwoFactorController::class, 'disable'])
+        ->middleware('throttle:api-auth')
+        ->name('web.account.two-factor.disable');
 
     Route::get('/leads', [PageController::class, 'leads'])
         ->middleware('permission:leads.view')->name('web.leads');

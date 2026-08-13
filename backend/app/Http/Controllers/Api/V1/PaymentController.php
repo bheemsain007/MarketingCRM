@@ -8,6 +8,7 @@ use App\Enums\Permission;
 use App\Http\Controllers\Controller;
 use App\Models\Payment;
 use App\Models\Sale;
+use App\Services\Payments\PaymentLinkService;
 use App\Services\Payments\PaymentService;
 use App\Support\ApiResponse;
 use App\Support\QueryOptions;
@@ -101,6 +102,54 @@ class PaymentController extends Controller
             // immediately what is still owed.
             'balance' => $this->payments->balanceFor($sale->fresh()),
         ], 'Payment recorded.');
+    }
+
+    /**
+     * Issues a gateway-hosted payment link for a sale (FR-PAY-02, T-59).
+     *
+     * `payments.manage`, the same permission as recording one by hand: issuing
+     * a link is asking a customer for money, which is a sales action, not a
+     * refund. What it deliberately is NOT is a collection - the payment it
+     * creates is Pending until the gateway's callback says otherwise, so this
+     * endpoint cannot settle a balance or convert a lead.
+     *
+     * With no gateway credential the service refuses with a 503 naming the
+     * missing field rather than returning a link that collects nothing
+     * (SEC-CFG-04).
+     */
+    public function paymentLink(Request $request, Sale $sale, PaymentLinkService $links): JsonResponse
+    {
+        $this->authorizeSale($sale);
+
+        $validated = $request->validate([
+            // Optional: omitted means "the whole outstanding balance", which is
+            // derived rather than supplied (BR-PAY-04).
+            'amount' => ['nullable', 'numeric', 'min:0.01'],
+            'product_id' => ['nullable', 'integer', 'exists:products,id'],
+            'description' => ['nullable', 'string', 'max:255'],
+            // A link that never expires is a payable URL loose in an inbox for
+            // ever; the gateway is told when to stop honouring it.
+            'expires_at' => ['nullable', 'date', 'after:now'],
+        ]);
+
+        $link = $links->create($sale, $validated, $request->user()->id);
+
+        return ApiResponse::created([
+            'id' => $link->id,
+            'url' => $link->short_url,
+            'gateway' => $link->gateway,
+            'amount' => $link->amount,
+            'currency' => $link->currency,
+            'expires_at' => $link->expires_at,
+            'payment' => [
+                'id' => $link->payment?->id,
+                'reference' => $link->payment?->reference,
+                // Always pending. Returned so the caller can see that issuing a
+                // link collected nothing.
+                'status' => $link->payment?->status->value,
+            ],
+            'balance' => $this->payments->balanceFor($sale->fresh()),
+        ], 'Payment link created.');
     }
 
     /**

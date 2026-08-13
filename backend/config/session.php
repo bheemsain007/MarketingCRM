@@ -167,9 +167,21 @@ return [
     | to the server if the browser has a HTTPS connection. This will keep
     | the cookie from being sent to you when it can't be done securely.
     |
+    | Defaulted to ON in production and OFF everywhere else (SEC-OPS-02), rather
+    | than to Laravel's bare `env()` which is null - meaning "off" - on a host
+    | where nobody remembered the key. The failure this prevents is invisible:
+    | the app works perfectly over HTTPS with an insecure cookie, and the flaw
+    | only shows up as a stolen session on the one request that got downgraded.
+    |
+    | The reason this can be defaulted safely on the shared-hosting target is
+    | TrustProxies (bootstrap/app.php): TLS terminates at the provider's proxy,
+    | so without it Laravel would think every request was plain HTTP and issue a
+    | Secure cookie the browser then refuses to send back - which looks exactly
+    | like "signing in does nothing".
+    |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE'),
+    'secure' => env('SESSION_SECURE_COOKIE', env('APP_ENV') === 'production'),
 
     /*
     |--------------------------------------------------------------------------

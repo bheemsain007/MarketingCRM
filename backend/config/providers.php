@@ -85,9 +85,21 @@ return [
         'webhook_secret' => env('VAAAD_WEBHOOK_SECRET'),
     ],
 
-    // Phase 23 - Payment. Gateway not chosen (T-34).
+    /*
+     * Phase 23 - Payment gateway. Razorpay is the default choice (T-34).
+     *
+     * The default names WHICH gateway, not that one is usable: the credentials
+     * below stay null until an operator supplies them, and until then payment
+     * links refuse with a 503 naming the missing field rather than issuing a
+     * link that collects nothing (SEC-CFG-04). Those are separate questions and
+     * conflating them produces the wrong error message for both.
+     *
+     * Unlike the channel providers, this vendor's contract is not provisional -
+     * Razorpay's Payment Links REST API and its HMAC-SHA256 webhook signature
+     * are publicly documented and implemented against.
+     */
     'payment' => [
-        'gateway' => env('PAYMENT_GATEWAY'),
+        'gateway' => env('PAYMENT_GATEWAY', 'razorpay'),
         'key_id' => env('PAYMENT_KEY_ID'),
         'key_secret' => env('PAYMENT_KEY_SECRET'),
         'webhook_secret' => env('PAYMENT_WEBHOOK_SECRET'),

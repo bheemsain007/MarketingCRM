@@ -5,6 +5,8 @@ use App\Exceptions\ApiException;
 use App\Http\Middleware\AssignCorrelationId;
 use App\Http\Middleware\EnsurePermission;
 use App\Http\Middleware\ForceJsonResponse;
+use App\Http\Middleware\RequireTwoFactorChallenge;
+use App\Http\Middleware\SecurityHeaders;
 use App\Support\ApiResponse;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -46,6 +48,51 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [
             ForceJsonResponse::class,
             AssignCorrelationId::class,
+        ]);
+
+        /*
+         * Shared hosting terminates TLS at the host's proxy and forwards
+         * plain HTTP to PHP (DEPLOYMENT §3A). Without this, every url() is
+         * built as http://, `$request->secure()` is false - so HSTS is never
+         * sent - and `SESSION_SECURE_COOKIE` on a request Laravel believes is
+         * insecure produces a cookie the browser then refuses to return, which
+         * looks exactly like "login does nothing".
+         *
+         * `*` is the correct value HERE and would be wrong on a public host:
+         * the app is only reachable through the provider's own proxy, so there
+         * is no path by which an attacker's X-Forwarded-For arrives unfiltered.
+         * On a VPS behind your own load balancer, pin this to its address.
+         * TRUSTED_PROXIES exists so that is a config change (T-30).
+         */
+        $middleware->trustProxies(
+            at: env('TRUSTED_PROXIES', '*') === '*'
+                ? '*'
+                : explode(',', (string) env('TRUSTED_PROXIES')),
+        );
+
+        /*
+         * Browser hardening on the web group (SEC-OPS-02). The API group is
+         * left out deliberately - see SecurityHeaders for why a CSP on a JSON
+         * body protects nothing.
+         */
+        $middleware->web(append: [
+            SecurityHeaders::class,
+
+            /*
+             * A browser session that has passed the password but not the second
+             * factor is held at the challenge (SEC-AUTH-07).
+             */
+            RequireTwoFactorChallenge::class,
+        ]);
+
+        /*
+         * The same gate on the API group. The Web CRM calls /api/v1 with that
+         * same session cookie (ADR-A), so protecting only the Blade pages would
+         * leave the entire API open to a half-authenticated browser. Token
+         * requests carry no session and fall through untouched.
+         */
+        $middleware->api(append: [
+            RequireTwoFactorChallenge::class,
         ]);
 
         $middleware->alias([

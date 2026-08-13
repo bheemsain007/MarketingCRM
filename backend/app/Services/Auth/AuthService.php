@@ -30,13 +30,47 @@ use Throwable;
 class AuthService
 {
     /**
+     * Session key marking a browser session that has passed the password but
+     * not yet the second factor (SEC-AUTH-07).
+     *
+     * Held here rather than in the controller because three places must agree
+     * on it: the login that sets it, RequireTwoFactorChallenge that enforces
+     * it, and the challenge that clears it. A literal string copied between
+     * them is a lockout or an open door, depending on which copy drifts.
+     */
+    public const TWO_FACTOR_PENDING = 'auth.two_factor_pending';
+
+    public function __construct(private readonly TwoFactorService $twoFactor) {}
+
+    /**
      * @return array{user: User, token: string, session: UserWorkSession}
      *
-     * @throws ApiException on invalid credentials or a disabled account
+     * @throws ApiException on invalid credentials, a disabled account, or a
+     *                      missing/invalid second factor
      */
     public function login(string $email, string $password, Request $request, string $source = 'web'): array
     {
         $user = $this->verifyCredentials($email, $password, $request);
+
+        /*
+         * Token logins verify the second factor inline rather than through a
+         * challenge round trip (SEC-AUTH-07). There is no session to park a
+         * half-authenticated state in, and issuing the token first and gating
+         * it afterwards would mean a valid bearer token exists before the
+         * factor is proved.
+         *
+         * The code is read off the request instead of being a parameter, so
+         * every existing caller keeps working unchanged and an account with 2FA
+         * switched off - which is all of them by default - behaves exactly as
+         * before. Clients send `two_factor_code` alongside the credentials.
+         */
+        if ($user->hasTwoFactorEnabled()) {
+            $this->twoFactor->challenge(
+                $user,
+                (string) $request->input('two_factor_code', ''),
+                $request,
+            );
+        }
 
         return DB::transaction(function () use ($user, $request, $source) {
             $token = $user->createToken(
@@ -67,7 +101,15 @@ class AuthService
      * cookie is both simpler and safer than storing a token in the browser
      * where any XSS could read it.
      *
-     * @return array{user: User, session: UserWorkSession}
+     * When the account carries a confirmed second factor (SEC-AUTH-07) this
+     * stops half way: the session is authenticated but flagged pending, and
+     * RequireTwoFactorChallenge holds it at the challenge page until
+     * `completeTwoFactorLogin()` runs. Nothing that represents "signed in" -
+     * the work session, `last_login_at`, the `login` audit entry - is written
+     * on that path, because somebody who abandons the challenge did not sign
+     * in, and attendance reporting (FR-ATT-01) would otherwise be paid on it.
+     *
+     * @return array{user: User, session: UserWorkSession|null, two_factor_required: bool}
      *
      * @throws ApiException on invalid credentials or a disabled account
      */
@@ -79,17 +121,56 @@ class AuthService
             Auth::login($user, $remember);
 
             // Fixation defence: the pre-login session id must not survive
-            // authentication (SEC-AUTH-06).
+            // authentication (SEC-AUTH-06). Done BEFORE the pending flag is
+            // written, or regeneration would discard it.
             $request->session()->regenerate();
 
-            $session = $this->openWorkSession($user, $request, 'web');
+            if ($user->hasTwoFactorEnabled()) {
+                $request->session()->put(self::TWO_FACTOR_PENDING, true);
 
-            $user->forceFill(['last_login_at' => now()])->save();
+                $this->audit($user->id, 'login_two_factor_pending', $request, [
+                    'source' => 'web_session',
+                ]);
 
-            $this->audit($user->id, 'login', $request, ['source' => 'web_session']);
+                return ['user' => $user, 'session' => null, 'two_factor_required' => true];
+            }
 
-            return ['user' => $user, 'session' => $session];
+            return [
+                'user' => $user,
+                'session' => $this->completeWebLogin($user, $request),
+                'two_factor_required' => false,
+            ];
         });
+    }
+
+    /**
+     * Finishes a browser login once the second factor has been accepted.
+     *
+     * Split out of `loginWeb` so both paths - no 2FA, and 2FA passed - write
+     * exactly the same three things. When this was inline, the challenge path
+     * was one forgotten line away from a signed-in user with no work session,
+     * which reads downstream as a telecaller who never came to work.
+     */
+    public function completeTwoFactorLogin(User $user, Request $request): UserWorkSession
+    {
+        $request->session()->forget(self::TWO_FACTOR_PENDING);
+
+        // A new session id again: the id issued before the challenge was
+        // handed out to a browser that had not yet proved the second factor.
+        $request->session()->regenerate();
+
+        return DB::transaction(fn () => $this->completeWebLogin($user, $request));
+    }
+
+    private function completeWebLogin(User $user, Request $request): UserWorkSession
+    {
+        $session = $this->openWorkSession($user, $request, 'web');
+
+        $user->forceFill(['last_login_at' => now()])->save();
+
+        $this->audit($user->id, 'login', $request, ['source' => 'web_session']);
+
+        return $session;
     }
 
     /**
