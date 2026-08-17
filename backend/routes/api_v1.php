@@ -25,6 +25,7 @@ use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\QuotationController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\SettingsController;
+use App\Http\Controllers\Api\V1\TemplateController;
 use App\Http\Controllers\Api\V1\TwoFactorAdminController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\WebhookController;
@@ -481,6 +482,51 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () 
 
 /*
 |--------------------------------------------------------------------------
+| Message templates (FR-COMM-02)
+|--------------------------------------------------------------------------
+| Two permissions, and the split matters: `templates.view` is held by every
+| telecaller because they pick a template every time they send, while
+| `templates.manage` is the authority to change what the organisation says in
+| its own name to thousands of people at once. Authoring is not sending.
+|
+| DELETE deactivates. It never destroys, and never soft-deletes either: sent
+| messages and campaigns hold `template_id` and their history reads the
+| template's name back through the relation, which a soft delete would resolve
+| to null (see TemplateService::deactivate()).
+|
+| No policy layer here - a template belongs to the organisation, not to a lead
+| or a user, so there is no record-level question to ask. `preview` is the
+| exception and runs LeadPolicy in the controller, because it renders against a
+| real lead and therefore returns that lead's data.
+*/
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('templates')->group(function () {
+    Route::get('/', [TemplateController::class, 'index'])
+        ->middleware('permission:templates.view')->name('api.v1.templates.index');
+
+    Route::get('/{template}', [TemplateController::class, 'show'])
+        ->middleware('permission:templates.view')->name('api.v1.templates.show');
+
+    // Reading only - it renders, it does not queue anything - so it carries the
+    // view gate, and the lead scope check inside stops it becoming a way to
+    // read a colleague's leads one render at a time.
+    Route::get('/{template}/preview', [TemplateController::class, 'preview'])
+        ->middleware('permission:templates.view')->name('api.v1.templates.preview');
+
+    Route::post('/', [TemplateController::class, 'store'])
+        ->middleware('permission:templates.manage')->name('api.v1.templates.store');
+
+    Route::patch('/{template}', [TemplateController::class, 'update'])
+        ->middleware('permission:templates.manage')->name('api.v1.templates.update');
+
+    Route::delete('/{template}', [TemplateController::class, 'destroy'])
+        ->middleware('permission:templates.manage')->name('api.v1.templates.destroy');
+
+    Route::post('/{id}/restore', [TemplateController::class, 'restore'])
+        ->middleware('permission:templates.manage')->name('api.v1.templates.restore');
+});
+
+/*
+|--------------------------------------------------------------------------
 | Inbound provider webhooks (FR-COMM-03, SEC-WH-*)
 |--------------------------------------------------------------------------
 | Unauthenticated by necessity - a provider has no session. Protected by a
@@ -488,8 +534,22 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () 
 | the rule that nothing in a payload may create a record.
 */
 Route::middleware('throttle:api-webhook')->prefix('webhooks')->group(function () {
+    // Email delivery status. The only channel that could report back at all
+    // until /delivery below existed.
     Route::post('/mailercloud', [WebhookController::class, 'mailercloud'])
         ->name('api.v1.webhooks.mailercloud');
+
+    /*
+     * Delivery status for SMS, WhatsApp, RCS and Voice (FR-COMM-03).
+     *
+     * Generic across the channels and the channel is in the body, like
+     * /inbound: three of the four vendors are unchosen (T-31, T-32, T-33), so
+     * four vendor-specific paths would be four guesses at payloads nobody has
+     * seen - and every one of them would need a new URL configured in a vendor
+     * dashboard the day the guess turned out wrong.
+     */
+    Route::post('/delivery', [WebhookController::class, 'delivery'])
+        ->name('api.v1.webhooks.delivery');
 
     // Inbound keyword opt-out (BR-DNC-05/07): a lead replies STOP and is
     // suppressed. Generic across the text channels; the channel is in the body.
@@ -639,8 +699,15 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('dialer')->
 | `campaigns.manage` builds and edits, `campaigns.run` presses send. Building
 | a campaign and being allowed to send it to twelve thousand people are not
 | the same authority.
+|
+| Rate limiting (NFR-07). The group carries the standard limiter, and the two
+| endpoints whose cost scales with the AUDIENCE stack the bulk limiter on top -
+| the same shape as the lead import above. Everything else here is a single-row
+| read or write whose cost does not depend on how many people were targeted:
+| pause, stop and clone touch one row, and throttling a dashboard's list call
+| to ten a minute would only teach operators to reload harder.
 */
-Route::middleware('auth:sanctum')->prefix('campaigns')->group(function () {
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('campaigns')->group(function () {
     Route::get('/', [CampaignController::class, 'index'])
         ->middleware('permission:campaigns.view')->name('api.v1.campaigns.index');
     Route::get('/{campaign}', [CampaignController::class, 'show'])
@@ -648,10 +715,18 @@ Route::middleware('auth:sanctum')->prefix('campaigns')->group(function () {
     Route::get('/{campaign}/recipients', [CampaignController::class, 'recipients'])
         ->middleware('permission:campaigns.view')->name('api.v1.campaigns.recipients');
 
-    // Reads the audience without sending. Safe enough for anyone who may build
-    // a campaign, and the whole point is to look before pressing send.
+    /*
+     * Reads the audience without sending. Safe enough for anyone who may build
+     * a campaign, and the whole point is to look before pressing send.
+     *
+     * Bulk-limited even so: it resolves the entire audience and asks the
+     * eligibility gate about every lead in it, so it costs what a start costs
+     * minus the provider calls. An unthrottled preview is a way to run the
+     * expensive half of a campaign repeatedly without the permission to send.
+     */
     Route::get('/{campaign}/preview', [CampaignController::class, 'preview'])
-        ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.preview');
+        ->middleware(['permission:campaigns.manage', 'throttle:api-bulk'])
+        ->name('api.v1.campaigns.preview');
 
     Route::post('/', [CampaignController::class, 'store'])
         ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.store');
@@ -660,8 +735,19 @@ Route::middleware('auth:sanctum')->prefix('campaigns')->group(function () {
     Route::post('/{campaign}/clone', [CampaignController::class, 'clone'])
         ->middleware('permission:campaigns.manage')->name('api.v1.campaigns.clone');
 
+    /*
+     * The most expensive request in the system: one call materialises an
+     * audience of unbounded size and fans it out into a job per targeted lead.
+     * At the standard 120/min this is a self-inflicted denial of service that
+     * also spends real money at the provider, so it takes the bulk limiter.
+     */
     Route::post('/{campaign}/start', [CampaignController::class, 'start'])
-        ->middleware('permission:campaigns.run')->name('api.v1.campaigns.start');
+        ->middleware(['permission:campaigns.run', 'throttle:api-bulk'])
+        ->name('api.v1.campaigns.start');
+
+    // Pause and stop stay on the standard allowance deliberately. They are the
+    // brakes on the line above, and a limiter that made stopping a runaway
+    // campaign harder than starting it would be pointed the wrong way.
     Route::post('/{campaign}/pause', [CampaignController::class, 'pause'])
         ->middleware('permission:campaigns.run')->name('api.v1.campaigns.pause');
     Route::post('/{campaign}/stop', [CampaignController::class, 'stop'])

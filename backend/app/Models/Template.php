@@ -31,6 +31,7 @@ use Illuminate\Support\Carbon;
  * @property Carbon|null $updated_at
  * @property Carbon|null $deleted_at
  * @property-read Collection<int, Campaign> $campaigns
+ * @property-read Collection<int, Message> $messages
  */
 class Template extends Model
 {
@@ -56,6 +57,18 @@ class Template extends Model
     public function campaigns(): HasMany
     {
         return $this->hasMany(Campaign::class);
+    }
+
+    /**
+     * Messages already sent from this template.
+     *
+     * The reason a template is retired rather than deleted (FR-COMM-02): these
+     * rows keep pointing here, and the message history renders the template's
+     * name from this side of the relation.
+     */
+    public function messages(): HasMany
+    {
+        return $this->hasMany(Message::class);
     }
 
     /**

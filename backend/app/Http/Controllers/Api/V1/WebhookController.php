@@ -11,6 +11,7 @@ use App\Models\Message;
 use App\Models\ProviderWebhookLog;
 use App\Services\Calls\AiCallService;
 use App\Services\Dnc\DncService;
+use App\Services\Messaging\DeliveryStatusService;
 use App\Services\Payments\PaymentGatewayManager;
 use App\Services\Payments\PaymentLinkService;
 use App\Services\Settings\SettingsService;
@@ -100,6 +101,95 @@ class WebhookController extends Controller
             // An unrecognised event is recorded as such rather than being
             // guessed at - that is how a bounce silently becomes a delivery
             // (FR-COMM-03: unknown states are visible, not swallowed).
+            'processing_error' => $applied ? null : 'Unrecognised event type.',
+        ]);
+
+        return Response::json(['success' => true, 'message' => 'Processed.']);
+    }
+
+    /**
+     * Delivery status for the non-email channels (FR-COMM-03).
+     *
+     * `mailercloud()` above was the only way a status could ever come back, so
+     * an SMS, WhatsApp, RCS or Voice message reached `sent` and stopped there
+     * for ever - `delivered_at`, `read_at` and failure handling were unreachable
+     * for four of the five message channels, and a number the carrier says does
+     * not exist went on being messaged because nothing could report it.
+     *
+     * One generic endpoint rather than four, and the channel travels in the
+     * body - the same shape `inbound()` takes, for the same reason: three of the
+     * four vendors are not chosen (T-31, T-32, T-33), and four vendor-specific
+     * endpoints would be four guesses at payloads nobody has seen. What the
+     * words MEAN is DeliveryStatusService's problem; this method's job is the
+     * hostile-input handling that every webhook here does identically.
+     *
+     * The channel is read before the log row is written so the replay guard can
+     * key on it: `(provider, provider_event_id)` is unique, and one shared
+     * `delivery` provider name would let an SMS event id collide with a WhatsApp
+     * one and silently swallow the second. It is parsed, not acted on - an
+     * unrecognised channel just labels the row `delivery`.
+     */
+    public function delivery(Request $request, DeliveryStatusService $statuses): JsonResponse
+    {
+        $channel = $statuses->channelFor($request->input('channel'));
+
+        try {
+            $log = ProviderWebhookLog::create([
+                'provider' => 'delivery'.($channel === null ? '' : ':'.$channel->value),
+                'event_type' => (string) $request->input('event', 'unknown'),
+                'provider_event_id' => $request->input('event_id') ?? $request->input('id'),
+                'payload' => $request->all(),
+                // Only what identifies the caller. The full header bag carries
+                // the shared secret, and this row is long-lived (SEC-CFG-05).
+                'headers' => ['user-agent' => $request->userAgent()],
+                'signature_valid' => false,
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // A redelivery of an event already handled, absorbed by the database
+            // rather than applied twice (SEC-WH-03).
+            return Response::json(['success' => true, 'message' => 'Already processed.']);
+        }
+
+        if (! $this->sharedSecretIsValid($request, 'providers.delivery.webhook_secret')) {
+            $log->update(['processed_at' => now(), 'processing_error' => 'Invalid or missing signature.']);
+
+            // 401 rather than 200, so a provider retries if our secret was
+            // merely misconfigured rather than the request being forged.
+            return Response::json(['success' => false, 'message' => 'Invalid signature.'], 401);
+        }
+
+        $log->update(['signature_valid' => true]);
+
+        if ($channel === null) {
+            // Acknowledged, not errored, and nothing is applied. Email has its
+            // own signed endpoint; accepting it here would mean the same status
+            // could be written by whichever of two secrets leaked first.
+            $log->update(['processed_at' => now(), 'processing_error' => 'Unsupported channel.']);
+
+            return Response::json(['success' => true, 'message' => 'Unsupported channel.']);
+        }
+
+        $message = $statuses->resolve(
+            $channel,
+            $request->input('custom_id'),
+            $request->input('message_id'),
+        );
+
+        if ($message === null) {
+            // Usually an event for another environment sharing the provider
+            // account. Making the provider retry it forever helps nobody.
+            $log->update(['processed_at' => now(), 'processing_error' => 'No matching message.']);
+
+            return Response::json(['success' => true, 'message' => 'No matching message.']);
+        }
+
+        $applied = $statuses->ingest($message, (string) $request->input('event'), $request->all());
+
+        $log->update([
+            'processed_at' => now(),
+            // An unrecognised event is recorded as such rather than guessed at -
+            // that is how a failure silently becomes a delivery (FR-COMM-03:
+            // unknown states are visible, not swallowed).
             'processing_error' => $applied ? null : 'Unrecognised event type.',
         ]);
 

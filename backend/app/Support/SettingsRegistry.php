@@ -57,6 +57,10 @@ class SettingsRegistry
             new SettingDefinition('crm.follow_up.reminder_lead_minutes', 'follow_ups', 'Reminder lead time (minutes)', 'int'),
             new SettingDefinition('crm.idle_threshold_minutes', 'follow_ups', 'Idle threshold (minutes)', 'int',
                 'A gap longer than this between tracked actions counts as idle.'),
+            new SettingDefinition('crm.attendance.stale_after_minutes', 'follow_ups', 'Abandoned session timeout (minutes)', 'int',
+                'A session silent for longer than this is closed by the scheduler, ending at the last '
+                .'recorded activity (FR-ATT-01). Shift patterns differ, and this feeds the hours in '
+                .'telecaller reports - so it is settable rather than a constant.'),
 
             new SettingDefinition('crm.discount_approval_threshold', 'sales', 'Discount approval threshold (%)', 'float',
                 'Discounts above this need Manager+ approval (BR-SALE-03).'),
@@ -147,6 +151,14 @@ class SettingsRegistry
                 'Vendor not chosen (T-33).'),
             self::credential('providers.voice.api_key', 'voice', 'Voice API key', 'secret'),
 
+            // Delivery status for the non-email channels (FR-COMM-03). One
+            // generic endpoint across SMS, WhatsApp, RCS and Voice, so one
+            // secret - the channel travels in the body.
+            self::credential('providers.delivery.webhook_secret', 'delivery', 'Delivery status webhook secret', 'secret',
+                'Presented as X-Webhook-Token on /api/v1/webhooks/delivery by the SMS, WhatsApp, RCS and '
+                .'Voice providers. Until it is set, the endpoint refuses everything - it can mark messages '
+                .'delivered and suppress leads, so an unsigned one is worse than none.'),
+
             // Phase 19 - inbound keyword opt-out (BR-DNC-05/07)
             self::credential('providers.inbound.webhook_secret', 'dnc', 'Inbound webhook secret', 'secret',
                 'Presented as X-Webhook-Token on inbound STOP callbacks. Until it is set, the inbound endpoint refuses everything.'),
@@ -232,6 +244,7 @@ class SettingsRegistry
             'rcs' => 'RCS',
             'voice' => 'Voice',
             'ai_calling' => 'AI calling (Vaaad)',
+            'delivery' => 'Delivery status webhooks',
             'payment' => 'Payment gateway',
             'dnc' => 'Inbound opt-out',
             default => ucfirst($group),

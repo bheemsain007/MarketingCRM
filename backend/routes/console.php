@@ -51,6 +51,23 @@ Schedule::command('crm:process-follow-ups')
     ->withoutOverlapping();
 
 /*
+ * Scheduled campaigns (FR-CAMP-02, BR-CAMP-03/05).
+ *
+ * Without this line a campaign scheduled for 09:00 stays `scheduled` for ever
+ * while every screen claims it is going out - a silent failure that looks like
+ * success. Per-minute because a send window is chosen for a reason: a campaign
+ * scheduled for 09:00 and started at 09:59 has already missed it.
+ *
+ * `withoutOverlapping` is load-bearing rather than tidy. After downtime this
+ * faces a backlog of due campaigns, each of which materialises an audience of
+ * unbounded size, and two overlapping runs could hand the same campaign to the
+ * queue twice - which is a second copy of the message at the recipient's end.
+ */
+Schedule::command('crm:dispatch-scheduled-campaigns')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+/*
  * Overdue payments (BR-PAY-06). Daily rather than per-minute: "overdue" is a
  * date comparison, so it can only change at a day boundary. Runs early enough
  * that the collections list is right before anyone looks at it.
@@ -67,6 +84,24 @@ Schedule::command('crm:mark-overdue-payments')
  */
 Schedule::command('crm:decay-lead-scores')
     ->dailyAt('04:15')
+    ->withoutOverlapping();
+
+/*
+ * Abandoned work sessions (FR-ATT-01, Phase 26, T-24).
+ *
+ * Without this line a telecaller who closes the browser leaves a session open
+ * for ever, and an open session counts its logged-in time up to now() - so the
+ * number that feeds telecaller reports, and therefore pay, grows on its own
+ * while nobody is at the desk. Nothing else triggers this: the absence of a
+ * logout is not an event anything can listen for.
+ *
+ * Every fifteen minutes, not daily. The sweep is what bounds the error, and a
+ * daily job would leave an abandoned session open for up to a day past the
+ * threshold. It is cheap - one indexed scan of the open sessions - and it is
+ * idempotent, since a closed session is no longer open.
+ */
+Schedule::command('crm:close-stale-work-sessions')
+    ->everyFifteenMinutes()
     ->withoutOverlapping();
 
 /*

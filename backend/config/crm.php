@@ -194,6 +194,32 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Attendance (FR-ATT-01, Phase 26, T-24)
+    |--------------------------------------------------------------------------
+    | How long a work session may go without any activity before the scheduler
+    | closes it as abandoned. Sessions close on logout; a closed browser, a
+    | power cut or an OS kill produce no logout, and an open session counts its
+    | logged-in time up to now() - so without this sweep one closed laptop adds
+    | hours to a telecaller report every night, and those reports feed pay.
+    |
+    | FOUR HOURS is chosen against two failure directions, not one. Too short
+    | and a long call, a training session or a lunch break closes a session
+    | somebody is still in the middle of, understating a real shift. Too long
+    | and an abandoned session collects a whole night. Four hours is longer than
+    | any plausible gap in a working day and shorter than the gap to the next
+    | one - which is the property that matters, not the number itself.
+    |
+    | It is DELIBERATELY not derived from idle_threshold_minutes. Idle is five
+    | minutes because five minutes of quiet is not work; abandonment is a
+    | different question with a different answer, and tying them together would
+    | mean tuning one silently retunes the other.
+    */
+    'attendance' => [
+        'stale_after_minutes' => (int) env('ATTENDANCE_STALE_AFTER_MINUTES', 240),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Lead scoring (BR-SCORE-01) - PROPOSED
     |--------------------------------------------------------------------------
     | Score is 0-100, DERIVED from `interest_signals` rather than accumulated on

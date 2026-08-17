@@ -72,6 +72,23 @@ return [
         'api_key' => env('VOICE_API_KEY'),
     ],
 
+    /*
+     * Delivery status for SMS, WhatsApp, RCS and Voice (FR-COMM-03).
+     *
+     * One secret for one generic endpoint, not four. Three of these vendors are
+     * unchosen (T-31, T-32, T-33), and the channel travels in the body - so a
+     * per-vendor secret would be three credentials named after guesses. When a
+     * vendor is chosen and documents its own signing scheme, that scheme
+     * replaces this shared secret the way Razorpay's did (T-53).
+     *
+     * Until it is set the endpoint refuses everything: an unsigned endpoint that
+     * can mark messages delivered and suppress leads is worse than one that is
+     * switched off.
+     */
+    'delivery' => [
+        'webhook_secret' => env('DELIVERY_WEBHOOK_SECRET'),
+    ],
+
     // Phase 19 - inbound keyword opt-out (STOP/UNSUBSCRIBE). Shared secret the
     // inbound webhook must present; provisional like the other webhook secrets
     // until a provider's own scheme is confirmed (T-53).

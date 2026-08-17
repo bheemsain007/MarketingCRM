@@ -36,7 +36,21 @@ class SendCampaignMessage implements ShouldQueue
 
     public function handle(CampaignEligibility $eligibility, OutboundMessageService $messages): void
     {
-        $recipient = CampaignRecipient::with(['campaign', 'lead'])->find($this->recipientId);
+        /*
+         * The lead is loaded WITH trashed rows on purpose.
+         *
+         * The audience is materialised once and never rebuilt, so a lead
+         * soft-deleted afterwards still has a recipient row pointing at it. The
+         * default scope hid that lead, this job could not resolve it, and it
+         * returned - leaving the row `pending` for ever and the campaign one
+         * outstanding recipient short of completion, permanently. Loading the
+         * archived lead is what lets the skip below name the real reason
+         * instead of silently giving up on the row.
+         */
+        $recipient = CampaignRecipient::with([
+            'campaign',
+            'lead' => fn ($query) => $query->withTrashed(),
+        ])->find($this->recipientId);
 
         if ($recipient === null || $recipient->status !== 'pending') {
             return;
@@ -45,7 +59,9 @@ class SendCampaignMessage implements ShouldQueue
         $campaign = $recipient->campaign;
         $lead = $recipient->lead;
 
-        if ($campaign === null || $lead === null) {
+        // No campaign behind the row leaves nothing to record an outcome
+        // against, and nothing to complete. Genuinely nothing to do.
+        if ($campaign === null) {
             return;
         }
 
@@ -53,6 +69,23 @@ class SendCampaignMessage implements ShouldQueue
         // reason rather than left pending, so the counts still add up.
         if (! $campaign->status->isDispatchable()) {
             $this->skip($recipient, CampaignSkipReason::CampaignNotRunning);
+
+            return;
+        }
+
+        /*
+         * BR-CAMP-01 names "the lead is not archived" as an eligibility
+         * condition, and this is the moment it can be judged - the audience
+         * query could not, because a lead archived at 09:20 was still present
+         * when the audience was resolved at 09:00 (BR-CAMP-02).
+         *
+         * A hard-deleted lead lands here as null and takes the same branch. The
+         * operational fact is identical - the row points at somebody who is not
+         * there to receive anything - and BR-DNC-05 wants a reason recorded
+         * either way rather than a row nobody can account for.
+         */
+        if ($lead === null || $lead->trashed()) {
+            $this->skip($recipient, CampaignSkipReason::LeadArchived);
 
             return;
         }
