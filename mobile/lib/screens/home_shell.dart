@@ -4,6 +4,7 @@ import '../core/di/dependencies.dart';
 import '../widgets/outbox_banner.dart';
 import 'follow_up_screen.dart';
 import 'lead_list_screen.dart';
+import 'template_management_screen.dart';
 
 /// The signed-in shell: leads, the diary, and the state of the outbox above
 /// both of them.
@@ -12,6 +13,7 @@ class HomeShell extends StatefulWidget {
 
   static const Key navigationKey = Key('home.navigation');
   static const Key signOutKey = Key('home.signOut');
+  static const Key templatesKey = Key('home.templates');
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -57,6 +59,19 @@ class _HomeShellState extends State<HomeShell> {
                   user.name,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+              ),
+            ),
+          // `templates.view`, not `templates.manage`: every sender needs to
+          // browse templates to pick one when composing, which is a broader
+          // audience than who may author them (TemplateManagementScreen hides
+          // the write controls itself for the narrower group).
+          if (user?.can('templates.view') ?? false)
+            IconButton(
+              key: HomeShell.templatesKey,
+              tooltip: 'Templates',
+              icon: const Icon(Icons.description_outlined),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(builder: (_) => const TemplateManagementScreen()),
               ),
             ),
           IconButton(

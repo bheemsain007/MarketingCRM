@@ -11,6 +11,8 @@ import 'package:marketing_crm_mobile/repositories/auth_repository.dart';
 import 'package:marketing_crm_mobile/repositories/call_repository.dart';
 import 'package:marketing_crm_mobile/repositories/follow_up_repository.dart';
 import 'package:marketing_crm_mobile/repositories/lead_repository.dart';
+import 'package:marketing_crm_mobile/repositories/message_repository.dart';
+import 'package:marketing_crm_mobile/repositories/template_repository.dart';
 import 'package:marketing_crm_mobile/state/auth_controller.dart';
 
 import 'scripted_api.dart';
@@ -49,6 +51,8 @@ class Harness {
       leadRepository: LeadRepository(api: client),
       callRepository: CallRepository(api: client, outbox: outbox),
       followUpRepository: FollowUpRepository(api: client),
+      messageRepository: MessageRepository(api: client),
+      templateRepository: TemplateRepository(api: client),
       auth: AuthController(repository: authRepository),
     );
   }

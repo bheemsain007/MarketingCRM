@@ -4,6 +4,8 @@ import '../../repositories/auth_repository.dart';
 import '../../repositories/call_repository.dart';
 import '../../repositories/follow_up_repository.dart';
 import '../../repositories/lead_repository.dart';
+import '../../repositories/message_repository.dart';
+import '../../repositories/template_repository.dart';
 import '../../state/auth_controller.dart';
 import '../api/api_client.dart';
 import '../app_config.dart';
@@ -34,6 +36,8 @@ class AppDependencies {
     required this.leadRepository,
     required this.callRepository,
     required this.followUpRepository,
+    required this.messageRepository,
+    required this.templateRepository,
     required this.auth,
   }) {
     // The client needs the controller and the controller needs the client, so
@@ -72,6 +76,8 @@ class AppDependencies {
       leadRepository: LeadRepository(api: api),
       callRepository: CallRepository(api: api, outbox: outbox),
       followUpRepository: FollowUpRepository(api: api),
+      messageRepository: MessageRepository(api: api),
+      templateRepository: TemplateRepository(api: api),
       auth: AuthController(repository: authRepository),
     );
   }
@@ -87,6 +93,8 @@ class AppDependencies {
   final LeadRepository leadRepository;
   final CallRepository callRepository;
   final FollowUpRepository followUpRepository;
+  final MessageRepository messageRepository;
+  final TemplateRepository templateRepository;
   final AuthController auth;
 
   Future<void> dispose() async {

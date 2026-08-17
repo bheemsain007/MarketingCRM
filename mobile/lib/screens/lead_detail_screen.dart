@@ -5,13 +5,15 @@ import '../core/di/dependencies.dart';
 import '../models/call.dart';
 import '../models/callability.dart';
 import '../models/lead.dart';
+import '../models/outbound_message.dart';
 import '../widgets/state_views.dart';
 import 'call_outcome_sheet.dart';
+import 'message_compose_sheet.dart';
 
 /// One lead: who they are, where they are in the pipeline, every call made to
-/// them, and the button that starts the next one.
+/// them, and the four ways to contact them next.
 ///
-/// The calling sequence lives here and follows ADR-B exactly:
+/// **Calling** follows ADR-B exactly:
 ///
 ///   ask the server whether this lead may be called → create the call record →
 ///   hand the number to the phone's own dialer → report the outcome back.
@@ -19,14 +21,40 @@ import 'call_outcome_sheet.dart';
 /// The app contributes the middle step and nothing else. It has no opinion on
 /// whether the lead is suppressed, whether it is a reasonable hour where they
 /// live, or whether the number is usable.
+///
+/// **SMS, WhatsApp and email** do not follow it, and must not. Those go through
+/// `POST /leads/{lead}/messages` and never through the handset's own SMS app,
+/// WhatsApp or mail client — see `MessageRepository` for why. The user never
+/// leaves this app, and every message is gated and logged server-side.
+///
+/// Note what is asked and what is not. `GET /leads/{lead}/callability` speaks
+/// only about calling: it is the endpoint's whole subject, and the two refusals
+/// it returns are the DNC list and the calling-hours window. This screen
+/// therefore lets it grey out the *call* button and nothing else. Inferring
+/// "suppressed for calls, so suppressed for SMS too" would be this app deciding
+/// a suppression-matrix question that `DncService` owns (BR-DNC-01) — so each
+/// message channel asks by sending, and shows the `403` it gets back.
 class LeadDetailScreen extends StatefulWidget {
   const LeadDetailScreen({required this.leadId, super.key});
 
   final int leadId;
 
   static const Key callButtonKey = Key('lead.call');
+  static const Key smsButtonKey = Key('lead.sms');
+  static const Key whatsappButtonKey = Key('lead.whatsapp');
+  static const Key emailButtonKey = Key('lead.email');
+  static const Key noEmailNoticeKey = Key('lead.noEmail');
   static const Key refusalKey = Key('lead.callRefusal');
   static const Key historyKey = Key('lead.callHistory');
+
+  /// The button for a message channel, so a test can name one.
+  static Key messageButtonKey(MessageChannel channel) {
+    return switch (channel) {
+      MessageChannel.sms => smsButtonKey,
+      MessageChannel.whatsapp => whatsappButtonKey,
+      MessageChannel.email => emailButtonKey,
+    };
+  }
 
   @override
   State<LeadDetailScreen> createState() => _LeadDetailScreenState();
@@ -145,6 +173,87 @@ class _LeadDetailScreenState extends State<LeadDetailScreen> {
     }
   }
 
+  /// The send sequence, for SMS, WhatsApp and email alike.
+  ///
+  /// Compose → `POST /leads/{lead}/messages` → show whatever the server said.
+  /// No `sms:`, no `mailto:`, no WhatsApp deep link: leaving the app to send
+  /// would skip the DNC gate, the frequency caps and the message log, and the
+  /// CRM would have no record the lead was contacted at all.
+  ///
+  /// The `422` loop is the same one the call outcome uses, and for the same
+  /// reason: an empty body comes back "Provide a body or choose a template."
+  /// and the honest response is to reopen the form carrying the server's
+  /// sentence rather than to have predicted it on the handset. A `422` the user
+  /// cannot fix — a lead whose email was deleted between opening this screen
+  /// and sending — reopens too, showing why, and they back out.
+  Future<void> _sendMessage(MessageChannel channel) async {
+    final lead = _lead;
+    if (lead == null || _working) {
+      return;
+    }
+
+    final deps = AppScope.of(context);
+    String? serverError;
+
+    while (true) {
+      if (!mounted) {
+        return;
+      }
+
+      final draft = await MessageComposeSheet.show(
+        context,
+        channel: channel,
+        leadId: lead.id,
+        leadName: lead.name,
+        serverError: serverError,
+      );
+
+      if (draft == null || !mounted) {
+        // Backed out before any request was made. Nothing was sent and nothing
+        // was recorded — unlike a call, there is no open record to tidy up.
+        return;
+      }
+
+      setState(() => _working = true);
+
+      try {
+        final result = await deps.messageRepository.send(
+          leadId: lead.id,
+          channel: channel,
+          body: draft.body,
+          subject: draft.subject,
+        );
+
+        if (!mounted) {
+          return;
+        }
+
+        // The server's sentence verbatim. It is the only thing that knows
+        // whether a provider is configured for this channel, and "queued but
+        // not delivered" is not a detail worth rounding off to "Sent".
+        _snack(result.message);
+
+        return;
+      } on ValidationException catch (error) {
+        serverError = error.message;
+      } on ApiException catch (error) {
+        // Includes the `403 dnc.suppressed` refusal, which carries the channel
+        // and the suppression reason in its message.
+        if (!mounted) {
+          return;
+        }
+
+        _snack(error.message);
+
+        return;
+      } finally {
+        if (mounted) {
+          setState(() => _working = false);
+        }
+      }
+    }
+  }
+
   /// Asks for the outcome, and keeps asking while the server rejects it.
   ///
   /// The loop exists because the server owns the validation: a
@@ -254,10 +363,12 @@ class _LeadDetailScreenState extends State<LeadDetailScreen> {
         children: <Widget>[
           _LeadSummary(lead: lead),
           const SizedBox(height: 16),
-          _CallAction(
+          _ContactActions(
+            lead: lead,
             callability: _callability,
             busy: _working,
             onCall: _startCall,
+            onSend: _sendMessage,
           ),
           const SizedBox(height: 24),
           Text('Call history', style: Theme.of(context).textTheme.titleMedium),
@@ -310,7 +421,11 @@ class _LeadSummary extends StatelessWidget {
               Text(lead.company!, style: theme.textTheme.bodyMedium),
             ],
             const SizedBox(height: 12),
-            _Field(icon: Icons.phone_outlined, value: lead.phoneFormatted),
+            // No phone field here, by design (SEC-PII-04). The app still holds
+            // the number — it has to, to hand it to the dialer — but a
+            // telecaller dials with the Call button, not by reading digits, and
+            // a lead book rendered as numbers is a lead book that leaves the
+            // building on a photo.
             if (lead.email != null) _Field(icon: Icons.mail_outline, value: lead.email!),
             if (lead.city != null || lead.state != null)
               _Field(
@@ -368,6 +483,136 @@ class _Field extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(child: Text(value, style: theme.textTheme.bodyMedium)),
         ],
+      ),
+    );
+  }
+}
+
+/// The four ways to contact a lead.
+///
+/// Call is prominent because it is the job; the three message channels sit
+/// under it as equals. Email is the only one that can be missing, because it is
+/// the only one whose address is not the phone number the lead was created
+/// with — `OutboundMessageService::recipientFor()` uses `email` for email and
+/// `phone_e164` for everything else.
+class _ContactActions extends StatelessWidget {
+  const _ContactActions({
+    required this.lead,
+    required this.callability,
+    required this.busy,
+    required this.onCall,
+    required this.onSend,
+  });
+
+  final Lead lead;
+  final Callability callability;
+  final bool busy;
+  final VoidCallback onCall;
+  final void Function(MessageChannel channel) onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    // A lead with no email address cannot be emailed: the send would come back
+    // `422 "This lead has no Email address on record."`. Offering the action
+    // anyway would let someone write a message and lose it to a refusal that
+    // was knowable before they started. This is not the app deciding a rule —
+    // the presence of an address is a fact on the record, not a judgement —
+    // and the server still refuses if the address disappears meanwhile.
+    final canEmail = lead.email != null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _CallAction(callability: callability, busy: busy, onCall: onCall),
+        const SizedBox(height: 12),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: _ChannelButton(
+                channel: MessageChannel.sms,
+                icon: Icons.sms_outlined,
+                busy: busy,
+                onSend: onSend,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _ChannelButton(
+                channel: MessageChannel.whatsapp,
+                icon: Icons.chat_outlined,
+                busy: busy,
+                onSend: onSend,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: canEmail
+                  ? _ChannelButton(
+                      channel: MessageChannel.email,
+                      icon: Icons.mail_outline,
+                      busy: busy,
+                      onSend: onSend,
+                    )
+                  : const _NoEmailNotice(),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// One message channel. Never a deep link — see `MessageRepository`.
+class _ChannelButton extends StatelessWidget {
+  const _ChannelButton({
+    required this.channel,
+    required this.icon,
+    required this.busy,
+    required this.onSend,
+  });
+
+  final MessageChannel channel;
+  final IconData icon;
+  final bool busy;
+  final void Function(MessageChannel channel) onSend;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      key: LeadDetailScreen.messageButtonKey(channel),
+      onPressed: busy ? null : () => onSend(channel),
+      icon: Icon(icon, size: 18),
+      label: Text(channel.label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(44),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+    );
+  }
+}
+
+/// Why there is no Email button, said rather than left blank.
+class _NoEmailNotice extends StatelessWidget {
+  const _NoEmailNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      key: LeadDetailScreen.noEmailNoticeKey,
+      height: 44,
+      alignment: Alignment.center,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        'No email',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: theme.textTheme.labelLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant),
       ),
     );
   }

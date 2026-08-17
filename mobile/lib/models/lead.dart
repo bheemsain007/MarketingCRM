@@ -61,10 +61,21 @@ class Lead {
   final int id;
   final String name;
 
-  /// E.164 — this is what gets handed to the dialer.
+  /// E.164 — this is what gets handed to the dialer, and the only reason the
+  /// app holds a number at all.
+  ///
+  /// It is **never rendered** (SEC-PII-04). The lead book is the asset; a screen
+  /// full of numbers is that asset photographable off a handset, and a telecaller
+  /// does not need to read a number to dial it. `tel:` carries the number to the
+  /// OS without a human ever seeing it inside this app. What the native dialer
+  /// then shows is the operating system's business, not ours.
   final String phone;
 
-  /// Display form. Never dialled: the formatting is for eyes, not for `tel:`.
+  /// The server's display form of [phone].
+  ///
+  /// Kept because `LeadResource` sends it and this model mirrors the resource,
+  /// but deliberately unused: see [phone]. If you are about to put this in a
+  /// widget, that is the thing SEC-PII-04 asks you not to do.
   final String phoneFormatted;
 
   final String status;
@@ -86,9 +97,24 @@ class Lead {
 
   bool get hasPhone => phone.isNotEmpty;
 
+  /// The line under the name in the lead list.
+  ///
+  /// Never the phone number (SEC-PII-04). The fallbacks exist so a lead
+  /// carrying neither a company nor a city still gets a useful line rather
+  /// than a blank one — who owns it, and failing that where it sits in the
+  /// pipeline. Falling back to the number here was the exact regression this
+  /// getter exists to rule out.
   String get subtitle {
     final parts = <String>[?company, ?city];
 
-    return parts.isEmpty ? phoneFormatted : '${parts.join(' · ')} · $phoneFormatted';
+    if (parts.isNotEmpty) {
+      return parts.join(' · ');
+    }
+
+    if (assignedToName != null) {
+      return assignedToName!;
+    }
+
+    return statusLabel;
   }
 }
