@@ -7,6 +7,7 @@ use App\Exceptions\ApiException;
 use App\Models\AuditLog;
 use App\Models\User;
 use App\Models\UserWorkSession;
+use App\Services\Attendance\AttendanceRollupService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +41,10 @@ class AuthService
      */
     public const TWO_FACTOR_PENDING = 'auth.two_factor_pending';
 
-    public function __construct(private readonly TwoFactorService $twoFactor) {}
+    public function __construct(
+        private readonly TwoFactorService $twoFactor,
+        private readonly AttendanceRollupService $rollup,
+    ) {}
 
     /**
      * @return array{user: User, token: string, session: UserWorkSession}
@@ -302,6 +306,13 @@ class AuthService
         ]);
     }
 
+    /**
+     * Closes every open session for this user and rolls it up (FR-ATT-03) in
+     * the same pass - a session's active/idle/break split is only ever true
+     * once the session has an end, so computing it anywhere else would mean
+     * reports read a number that was never finalised against the session it
+     * describes.
+     */
     private function closeWorkSession(User $user, string $reason): void
     {
         $user->workSessions()
@@ -312,6 +323,8 @@ class AuthService
                     'ended_at' => now(),
                     'end_reason' => $reason,
                 ]);
+
+                $this->rollup->rollup($session);
             });
     }
 

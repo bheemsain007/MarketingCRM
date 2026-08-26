@@ -51,6 +51,10 @@ class StaleWorkSessionSweepTest extends TestCase
         // Four hours of silence. Named explicitly so a test never inherits
         // whatever the deployed default happens to become.
         config(['crm.attendance.stale_after_minutes' => 240]);
+
+        // Five minutes, for the same reason - the rollup tests below depend
+        // on it directly (FR-ATT-03).
+        config(['crm.idle_threshold_minutes' => 5]);
     }
 
     protected function tearDown(): void
@@ -311,5 +315,57 @@ class StaleWorkSessionSweepTest extends TestCase
         // colleague's.
         $this->assertNotNull($abandoned->fresh()->ended_at);
         $this->assertNull($working->fresh()->ended_at);
+    }
+
+    // -----------------------------------------------------------------------
+    // FR-ATT-03: a stale-closed session gets real numbers, not the defaults
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function a_stale_closed_session_has_its_active_and_idle_seconds_rolled_up(): void
+    {
+        // Active a couple of minutes into the shift, then sixteen hours of
+        // silence - the sweep must not leave active_seconds/idle_seconds at
+        // their zero defaults just because nobody was there to log out.
+        $session = $this->openSession($this->telecaller(), '16 hours');
+        $this->ping($session, '15 hours 58 minutes');
+        $this->ping($session, '15 hours 56 minutes');
+
+        $this->sweep();
+
+        $session->refresh();
+
+        // Two pings, two minutes apart, both inside the (default 5-minute)
+        // idle threshold: the whole gap between them counts as active.
+        $this->assertSame(120, $session->active_seconds);
+        $this->assertGreaterThan(0, $session->idle_seconds);
+
+        // logged_in (to the last ping) = active + idle + break, exactly - the
+        // sweep must not invent or lose seconds while rolling the session up.
+        $this->assertSame(
+            $session->loggedInSeconds(),
+            $session->active_seconds + $session->idle_seconds + $session->break_seconds,
+        );
+    }
+
+    #[Test]
+    public function a_stale_closed_session_still_on_break_has_the_break_finalised(): void
+    {
+        $session = $this->openSession($this->telecaller(), '16 hours');
+
+        // Break started, then one more ping ten minutes into it, then the
+        // machine died before anyone stopped the break.
+        $session->forceFill(['break_started_at' => now()->sub('15 hours 50 minutes')])->save();
+        $this->ping($session, '15 hours 40 minutes');
+
+        $this->sweep();
+
+        $session->refresh();
+
+        // Closed at the last ping (15h40m ago, the last evidence anyone was
+        // there); the break started ten minutes before that, so ten minutes of
+        // break is credited rather than left dangling on a closed session.
+        $this->assertNull($session->break_started_at);
+        $this->assertSame(600, $session->break_seconds);
     }
 }

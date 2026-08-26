@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\Call;
 use App\Models\CallRecording;
 use App\Models\User;
+use App\Services\Notifications\NotificationService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -31,6 +32,8 @@ use Illuminate\Support\Facades\URL;
  */
 class CallRecordingService
 {
+    public function __construct(private readonly NotificationService $notifications) {}
+
     /**
      * Accepts an uploaded recording for a call (FR-REC-02/03).
      *
@@ -73,6 +76,8 @@ class CallRecordingService
         $path = $file->store(sprintf('calls/%d', $call->id), $disk);
 
         if ($path === false) {
+            $this->notifyUploadFailed($call, $actor);
+
             throw new ApiException(
                 ErrorCode::ServerError,
                 'The recording could not be stored.',
@@ -112,6 +117,32 @@ class CallRecordingService
 
             return CallRecording::create($attributes);
         });
+    }
+
+    /**
+     * Tells the telecaller whose call it was that their recording did not
+     * make it to storage (FR-NOTIF-01, BR-NOTIF-02) - without this, a call
+     * with no evidence is discovered only when someone later goes looking
+     * for a recording that never arrived.
+     *
+     * Same owner resolution `attach()` uses when writing the row: the call's
+     * own `user_id`, falling back to whoever uploaded on their behalf.
+     */
+    private function notifyUploadFailed(Call $call, ?User $actor): void
+    {
+        $userId = $call->user_id ?? $actor?->id;
+        $user = $userId !== null ? User::find($userId) : null;
+
+        if ($user === null) {
+            return;
+        }
+
+        $this->notifications->notify(
+            $user,
+            'recording_upload_failed',
+            'Recording upload failed for call #'.$call->id,
+            ['reference' => $call],
+        );
     }
 
     /**

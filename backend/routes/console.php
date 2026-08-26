@@ -114,3 +114,19 @@ Schedule::command('crm:close-stale-work-sessions')
 Schedule::command('crm:purge-recordings')
     ->dailyAt('03:30')
     ->withoutOverlapping();
+
+/*
+ * Report pre-aggregation (FR-RPT-05). Dashboards read `report_daily_aggregates`
+ * instead of scanning calls/messages/lead_status_history directly for any
+ * period that is fully-past history - without this line those rows are never
+ * written and BusinessReportService::summary()/revenue() fall back to the live
+ * query on every request, forever.
+ *
+ * Early morning, well after the ORG_TIMEZONE day it aggregates has ended
+ * (IST is UTC+5:30, so even midnight UTC is already well into the next IST
+ * day). `withoutOverlapping` because two concurrent runs would upsert the same
+ * rows twice for no benefit and hold the aggregates table longer than needed.
+ */
+Schedule::command('crm:aggregate-daily-reports')
+    ->dailyAt('04:45')
+    ->withoutOverlapping();

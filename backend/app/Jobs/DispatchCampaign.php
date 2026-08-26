@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Enums\CampaignStatus;
 use App\Models\Campaign;
 use App\Models\CampaignRecipient;
+use App\Services\Campaigns\CampaignService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
@@ -75,6 +76,8 @@ class DispatchCampaign implements ShouldQueue
                 'status' => CampaignStatus::Completed->value,
                 'completed_at' => now(),
             ])->save();
+
+            app(CampaignService::class)->notifyOwnerOfCompletion($campaign);
         }
     }
 }

@@ -7,6 +7,7 @@ use App\Enums\CampaignStatus;
 use App\Exceptions\ApiException;
 use App\Models\CampaignRecipient;
 use App\Services\Campaigns\CampaignEligibility;
+use App\Services\Campaigns\CampaignService;
 use App\Services\Messaging\OutboundMessageService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -171,6 +172,8 @@ class SendCampaignMessage implements ShouldQueue
                 'status' => CampaignStatus::Completed->value,
                 'completed_at' => now(),
             ])->save();
+
+            app(CampaignService::class)->notifyOwnerOfCompletion($campaign);
         }
     }
 }

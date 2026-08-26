@@ -10,6 +10,7 @@ use App\Models\AuditLog;
 use App\Models\Opportunity;
 use App\Models\Quotation;
 use App\Models\User;
+use App\Services\Notifications\NotificationService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -20,6 +21,8 @@ use Illuminate\Support\Facades\DB;
  */
 class QuotationService
 {
+    public function __construct(private readonly NotificationService $notifications) {}
+
     /**
      * Drafts a quotation from the opportunity's current lines.
      *
@@ -77,8 +80,46 @@ class QuotationService
                 ]);
             }
 
+            if ($quotation->status === QuotationStatus::PendingApproval) {
+                $this->notifyApprovers($quotation, $actorId);
+            }
+
             return $quotation->fresh(['items']);
         });
+    }
+
+    /**
+     * Tells everyone who can approve a discount above threshold that one is
+     * waiting (FR-NOTIF-01, BR-NOTIF-02).
+     *
+     * There is no assigned reviewer for a quotation - approval is a
+     * permission, not a queue - so every active holder of `discounts.approve`
+     * is notified, minus the person who raised it: they could not approve
+     * their own discount even if they tried (BR-SALE-03).
+     */
+    private function notifyApprovers(Quotation $quotation, ?int $actorId): void
+    {
+        $approvers = User::query()
+            ->active()
+            ->whereHas('roles.permissions', fn ($q) => $q->where('name', Permission::DiscountsApprove->value))
+            ->when($actorId !== null, fn ($q) => $q->whereKeyNot($actorId))
+            ->get();
+
+        $this->notifications->notifyMany(
+            $approvers,
+            'discount_approval_requested',
+            'Discount approval requested: '.$quotation->number,
+            [
+                'body' => sprintf(
+                    '%s%% discount, total %s %s.',
+                    rtrim(rtrim(number_format((float) $quotation->discount_percent, 2), '0'), '.'),
+                    $quotation->currency,
+                    $quotation->total,
+                ),
+                'reference' => $quotation,
+                'action_url' => '/quotations/'.$quotation->id,
+            ],
+        );
     }
 
     /**

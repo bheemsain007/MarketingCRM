@@ -14,10 +14,12 @@ use App\Models\Lead;
 use App\Models\Message;
 use App\Models\Opportunity;
 use App\Models\Payment;
+use App\Models\ReportDailyAggregate;
 use App\Models\Sale;
 use App\Support\Reporting\Rate;
 use App\Support\Reporting\ReportPeriod;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -30,17 +32,102 @@ use Illuminate\Support\Facades\DB;
  * than *connected* calls, for instance, silently punishes an agent working a
  * list of dead numbers.
  *
+ * `summary()` and `revenue()` are read on every dashboard load, so FR-RPT-05
+ * lets them read `report_daily_aggregates` instead of scanning calls/messages/
+ * lead_status_history directly - but ONLY when the requested period is fully
+ * past history and every day in it already has a row. `liveSummary()` and
+ * `liveRevenue()` hold the original, unconditional query logic: `summary()`/
+ * `revenue()` fall back to them whenever the aggregate path is not safely
+ * usable, and `ReportAggregationService` calls them directly (never the smart
+ * wrappers) to compute the one day it is about to write - a smart wrapper
+ * reading its own not-yet-written row would be circular.
+ *
  * Telecaller performance (FR-RPT-01) is deliberately NOT here. It needs the
  * attribution model decided, and attribution affects pay (T-24, Phase 26).
  */
 class BusinessReportService
 {
     /**
-     * The dashboard tiles (FR-RPT-02).
+     * The dashboard tiles (FR-RPT-02), pre-aggregated where safe (FR-RPT-05).
+     *
+     * `conversion()` is called live unconditionally either way - it was not
+     * part of the FR-RPT-05 field list and stays out of this task's bound,
+     * alongside productPerformance()/sourcePerformance()/campaignPerformance()
+     * (see class docblock).
      *
      * @return array<string, mixed>
      */
     public function summary(ReportPeriod $period): array
+    {
+        $agg = $this->periodAggregate($period);
+
+        if ($agg === null) {
+            return $this->liveSummary($period);
+        }
+
+        return [
+            'leads' => [
+                // Snapshots, not period figures - always live, aggregated or
+                // not (see the migration's docblock for why).
+                'total' => $this->leads()->count(),
+                'new' => $agg['leads_new'],
+                'contacted' => $agg['leads_contacted'],
+                'interested' => $agg['leads_interested'],
+                'hot' => $this->leads()->where('temperature', LeadTemperature::Hot->value)->count(),
+                'interest_rate' => Rate::of(
+                    $agg['leads_interested'],
+                    $agg['leads_contacted'],
+                    'leads contacted this period',
+                )->toArray(),
+            ],
+
+            'calls' => [
+                'attempts' => $agg['calls_attempts'],
+                'connected' => $agg['calls_connected'],
+                'connect_rate' => Rate::of($agg['calls_connected'], $agg['calls_attempts'], 'call attempts this period')->toArray(),
+                'talk_time_seconds' => $agg['calls_talk_time_seconds'],
+                'average_duration_seconds' => $agg['calls_connected'] === 0
+                    ? null
+                    // Weighted from the summed totals, never an average of
+                    // daily averages - the same reason liveSummary() divides
+                    // by connected calls and not attempts (GLOSSARY 2.2).
+                    : round($agg['calls_talk_time_seconds'] / $agg['calls_connected'], 1),
+                'ai_calls' => $agg['calls_ai_calls'],
+            ],
+
+            'follow_ups' => [
+                'scheduled' => $agg['follow_ups_scheduled'],
+                'completed' => $agg['follow_ups_completed'],
+                'missed' => $agg['follow_ups_missed'],
+            ],
+
+            'messages' => [
+                'total' => $agg['messages_total'],
+                'by_channel' => $agg['messages_by_channel'],
+            ],
+
+            'sales' => [
+                'won' => $agg['sales_count'],
+                'opportunities_opened' => $agg['opportunities_opened'],
+                'opportunities_lost' => $agg['opportunities_lost'],
+            ],
+
+            'revenue' => $this->revenueFromAggregate($agg),
+            'conversion' => $this->conversion($period),
+        ];
+    }
+
+    /**
+     * The unconditional, always-live version of `summary()` (FR-RPT-05).
+     *
+     * This is the ONE place the query logic for these figures is written.
+     * `ReportAggregationService` calls this for a single-day period to learn
+     * what a day's row should hold, and `summary()` falls back to it whenever
+     * the aggregate path is not safely usable.
+     *
+     * @return array<string, mixed>
+     */
+    public function liveSummary(ReportPeriod $period): array
     {
         [$from, $to] = $period->bounds();
 
@@ -94,13 +181,13 @@ class BusinessReportService
             'messages' => $this->messageCounts($from, $to),
 
             'sales' => $this->salesSummary($period),
-            'revenue' => $this->revenue($period),
+            'revenue' => $this->liveRevenue($period),
             'conversion' => $this->conversion($period),
         ];
     }
 
     /**
-     * Revenue (GLOSSARY section 2.5).
+     * Revenue (GLOSSARY section 2.5), pre-aggregated where safe (FR-RPT-05).
      *
      * **Booked and collected are separate numbers and are never summed.** A
      * dashboard that added them would report money twice - once when the deal
@@ -109,6 +196,19 @@ class BusinessReportService
      * @return array<string, mixed>
      */
     public function revenue(ReportPeriod $period): array
+    {
+        $agg = $this->periodAggregate($period);
+
+        return $agg === null ? $this->liveRevenue($period) : $this->revenueFromAggregate($agg);
+    }
+
+    /**
+     * The unconditional, always-live version of `revenue()` (FR-RPT-05). See
+     * `liveSummary()`'s docblock - same reasoning, same callers.
+     *
+     * @return array<string, mixed>
+     */
+    public function liveRevenue(ReportPeriod $period): array
     {
         [$from, $to] = $period->bounds();
 
@@ -334,6 +434,105 @@ class BusinessReportService
                 'cost' => round((float) $campaigns->sum(fn (Campaign $c) => (float) $c->cost), 2),
                 'currency' => 'INR',
             ],
+        ];
+    }
+
+    // -----------------------------------------------------------------------
+    // FR-RPT-05: pre-aggregation
+    // -----------------------------------------------------------------------
+
+    /**
+     * Sums `report_daily_aggregates` over the period, or null if the aggregate
+     * path is not safely usable (FR-RPT-05).
+     *
+     * Null whenever the period touches today/the future - a day still
+     * accumulating has no finished row to read - or when any single day inside
+     * a fully-past range has no row yet, e.g. a missed scheduler run. Either
+     * way the caller falls back to the live query; correctness over speed, and
+     * a missing aggregate must never silently under-count.
+     *
+     * @return array<string, mixed>|null
+     */
+    private function periodAggregate(ReportPeriod $period): ?array
+    {
+        $timezone = (string) config('crm.timezone', 'UTC');
+        $today = Carbon::now($timezone)->toDateString();
+
+        [$from, $to] = $period->bounds();
+        $fromDate = $from->copy()->setTimezone($timezone)->toDateString();
+        $toDate = $to->copy()->setTimezone($timezone)->toDateString();
+
+        if ($toDate >= $today) {
+            return null;
+        }
+
+        $expectedDays = (int) Carbon::parse($fromDate)->diffInDays(Carbon::parse($toDate)) + 1;
+
+        $rows = ReportDailyAggregate::query()
+            ->where('tenant_id', (int) config('crm.default_tenant_id', 0))
+            ->whereBetween('aggregate_date', [$fromDate, $toDate])
+            ->get();
+
+        if ($rows->count() !== $expectedDays) {
+            // A gap day - one or more calendar days in range never got a row
+            // (a missed run, or a range predating this feature).
+            return null;
+        }
+
+        $channelTotals = [];
+        foreach ($rows as $row) {
+            foreach ((array) ($row->messages_by_channel ?? []) as $channel => $count) {
+                $channelTotals[$channel] = ($channelTotals[$channel] ?? 0) + (int) $count;
+            }
+        }
+
+        return [
+            'leads_new' => (int) $rows->sum('leads_new'),
+            'leads_contacted' => (int) $rows->sum('leads_contacted'),
+            'leads_interested' => (int) $rows->sum('leads_interested'),
+            'calls_attempts' => (int) $rows->sum('calls_attempts'),
+            'calls_connected' => (int) $rows->sum('calls_connected'),
+            'calls_talk_time_seconds' => (int) $rows->sum('calls_talk_time_seconds'),
+            'calls_ai_calls' => (int) $rows->sum('calls_ai_calls'),
+            'follow_ups_scheduled' => (int) $rows->sum('follow_ups_scheduled'),
+            'follow_ups_completed' => (int) $rows->sum('follow_ups_completed'),
+            'follow_ups_missed' => (int) $rows->sum('follow_ups_missed'),
+            'messages_total' => (int) $rows->sum('messages_total'),
+            'messages_by_channel' => $channelTotals,
+            'sales_count' => (int) $rows->sum('sales_count'),
+            'opportunities_opened' => (int) $rows->sum('opportunities_opened'),
+            'opportunities_lost' => (int) $rows->sum('opportunities_lost'),
+            // Explicit float casts inside the callback, not on the sum: the
+            // column is `decimal:2`-cast (a string), and summing strings
+            // relies on PHP's numeric-string coercion rather than saying so.
+            'revenue_booked' => (float) $rows->sum(fn (ReportDailyAggregate $r) => (float) $r->revenue_booked),
+            'revenue_collected' => (float) $rows->sum(fn (ReportDailyAggregate $r) => (float) $r->revenue_collected),
+            'revenue_refunded' => (float) $rows->sum(fn (ReportDailyAggregate $r) => (float) $r->revenue_refunded),
+        ];
+    }
+
+    /**
+     * Builds `revenue()`'s shape from a `periodAggregate()` result. Shared by
+     * `revenue()` and `summary()` so a summary read costs one aggregates query,
+     * not two (FR-RPT-05).
+     *
+     * @param  array<string, mixed>  $agg
+     * @return array<string, mixed>
+     */
+    private function revenueFromAggregate(array $agg): array
+    {
+        return [
+            'booked' => round($agg['revenue_booked'], 2),
+            'collected' => round($agg['revenue_collected'], 2),
+            'refunded' => round($agg['revenue_refunded'], 2),
+            'net' => round($agg['revenue_collected'] - $agg['revenue_refunded'], 2),
+            // Snapshots of what is owed NOW - always live (see periodAggregate()).
+            'outstanding' => $this->outstanding(),
+            'overdue' => $this->overdue(),
+            'average_deal_size' => $agg['sales_count'] === 0
+                ? null
+                : round($agg['revenue_booked'] / $agg['sales_count'], 2),
+            'currency' => 'INR',
         ];
     }
 

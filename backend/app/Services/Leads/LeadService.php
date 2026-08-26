@@ -6,6 +6,7 @@ use App\Enums\ErrorCode;
 use App\Exceptions\ApiException;
 use App\Models\Lead;
 use App\Models\LeadActivity;
+use App\Services\Attendance\AttendancePingService;
 use App\Support\PhoneNumber;
 use Illuminate\Support\Facades\DB;
 
@@ -30,6 +31,7 @@ class LeadService
     public function __construct(
         private readonly LeadAssignmentService $assignment,
         private readonly DuplicateDetector $duplicates,
+        private readonly AttendancePingService $attendancePings,
     ) {}
 
     /**
@@ -206,7 +208,11 @@ class LeadService
     }
 
     /**
-     * Writes the user-facing timeline (FR-LEAD-09).
+     * Writes the user-facing timeline (FR-LEAD-09), and - for the activity
+     * types FR-ATT-02 tracks (calls, notes, status changes, sends,
+     * follow-ups) - an attendance signal alongside it. One call site for both
+     * means every caller of recordActivity() feeds attendance automatically,
+     * the same reasoning that keeps lead creation itself to one path.
      *
      * @param  array<string, mixed>  $meta
      */
@@ -218,7 +224,7 @@ class LeadService
         array $meta = [],
         ?string $description = null,
     ): LeadActivity {
-        return $lead->activities()->create([
+        $activity = $lead->activities()->create([
             'user_id' => $actorId,
             'activity_type' => $type,
             'title' => $title,
@@ -226,5 +232,9 @@ class LeadService
             'meta' => $meta ?: null,
             'occurred_at' => now(),
         ]);
+
+        $this->attendancePings->recordForLeadActivity($actorId, $type, $lead);
+
+        return $activity;
     }
 }

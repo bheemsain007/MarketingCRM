@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\UserWorkSession;
+use App\Services\Attendance\AttendanceRollupService;
 use Illuminate\Console\Command;
 use Illuminate\Support\Carbon;
 
@@ -48,7 +49,7 @@ class CloseStaleWorkSessionsCommand extends Command
      */
     private const END_REASON = 'timeout';
 
-    public function handle(): int
+    public function handle(AttendanceRollupService $rollup): int
     {
         $minutes = (int) config('crm.attendance.stale_after_minutes');
 
@@ -95,6 +96,12 @@ class CloseStaleWorkSessionsCommand extends Command
                 'ended_at' => $this->lastSeen($session),
                 'end_reason' => self::END_REASON,
             ]);
+
+            // A stale-closed session gets real active/idle/break numbers too
+            // (FR-ATT-03), not the zero defaults it was created with - the
+            // sweep is a different way for a session to end, not a reason for
+            // its hours to go uncounted.
+            $rollup->rollup($session);
         }
 
         $this->info(sprintf('%d work session(s) closed as abandoned.', $stale->count()));

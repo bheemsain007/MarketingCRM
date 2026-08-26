@@ -11,6 +11,7 @@ use App\Jobs\DispatchCampaign;
 use App\Models\Campaign;
 use App\Models\Lead;
 use App\Models\User;
+use App\Services\Notifications\NotificationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -29,7 +30,10 @@ use Illuminate\Support\Str;
  */
 class CampaignService
 {
-    public function __construct(private readonly CampaignEligibility $eligibility) {}
+    public function __construct(
+        private readonly CampaignEligibility $eligibility,
+        private readonly NotificationService $notifications,
+    ) {}
 
     /**
      * @param  array<string, mixed>  $data
@@ -141,6 +145,45 @@ class CampaignService
         $campaign->forceFill(['completed_at' => now()])->save();
 
         return $campaign->fresh();
+    }
+
+    /**
+     * Tells the campaign's owner it reached a terminal outcome (FR-NOTIF-01,
+     * BR-NOTIF-02). Called by whichever recipient job finishes the campaign
+     * last, right after it sets the campaign Completed - see
+     * `DispatchCampaign` and `SendCampaignMessage`.
+     *
+     * `CampaignStatus` has no separate "failed" state - only Completed and
+     * Stopped are terminal (BR-CAMP-05) - so BR-NOTIF-02's "completed or
+     * failed" is read from the outcome instead: a campaign that reached zero
+     * live sends against a real audience did not do its job, even though it
+     * finished normally.
+     */
+    public function notifyOwnerOfCompletion(Campaign $campaign): void
+    {
+        $owner = $campaign->created_by !== null ? User::find($campaign->created_by) : null;
+
+        if ($owner === null) {
+            return;
+        }
+
+        $failed = $campaign->total_targeted > 0 && $campaign->total_sent === 0;
+
+        $this->notifications->notify(
+            $owner,
+            $failed ? 'campaign_failed' : 'campaign_completed',
+            ($failed ? 'Campaign failed: ' : 'Campaign completed: ').$campaign->name,
+            [
+                'body' => sprintf(
+                    '%d sent, %d skipped of %d targeted.',
+                    $campaign->total_sent,
+                    $campaign->total_skipped,
+                    $campaign->total_targeted,
+                ),
+                'reference' => $campaign,
+                'action_url' => '/campaigns/'.$campaign->id,
+            ],
+        );
     }
 
     /**

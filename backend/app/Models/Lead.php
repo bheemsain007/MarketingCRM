@@ -16,6 +16,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
  * @property string $phone_e164
  * @property LeadStatus $status
  * @property LeadTemperature $temperature
+ * @property \Illuminate\Support\Carbon|null $last_contacted_at
  * @property-read LeadSource|null $source
  * @property-read Campaign|null $campaign
  * @property-read User|null $assignedUser

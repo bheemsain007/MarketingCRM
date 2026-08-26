@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\AttendanceController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\CallController;
 use App\Http\Controllers\Api\V1\CallRecordingController;
@@ -12,6 +13,7 @@ use App\Http\Controllers\Api\V1\InterestController;
 use App\Http\Controllers\Api\V1\LeadAssignmentController;
 use App\Http\Controllers\Api\V1\LeadController;
 use App\Http\Controllers\Api\V1\LeadDuplicateController;
+use App\Http\Controllers\Api\V1\LeadExportController;
 use App\Http\Controllers\Api\V1\LeadImportController;
 use App\Http\Controllers\Api\V1\LeadNoteController;
 use App\Http\Controllers\Api\V1\LeadProductController;
@@ -84,6 +86,28 @@ Route::prefix('auth')->group(function () {
 
 /*
 |--------------------------------------------------------------------------
+| Attendance (FR-ATT-02, FR-ATT-04)
+|--------------------------------------------------------------------------
+| Session open/close is the auth group above (FR-ATT-01); these three act on
+| the CALLER's own currently open session. Self-service only - there is no
+| "someone else's attendance" for a permission to scope, unlike leads, where a
+| permission answers "may they touch leads?" and a policy answers "may they
+| touch THIS one" - so normal auth is the whole gate.
+*/
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('attendance')->group(function () {
+    // The client-side heartbeat (page_view signal): proves presence with no
+    // lead action to hang a ping on.
+    Route::post('/ping', [AttendanceController::class, 'ping'])
+        ->name('api.v1.attendance.ping');
+
+    Route::post('/breaks/start', [AttendanceController::class, 'startBreak'])
+        ->name('api.v1.attendance.breaks.start');
+    Route::post('/breaks/stop', [AttendanceController::class, 'stopBreak'])
+        ->name('api.v1.attendance.breaks.stop');
+});
+
+/*
+|--------------------------------------------------------------------------
 | Products (Phase 5)
 |--------------------------------------------------------------------------
 | Read is available to anyone who can see leads - product names appear all over
@@ -148,6 +172,24 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('leads')->g
         ->middleware('permission:leads.import')->name('api.v1.leads.imports.show');
     Route::get('/imports/{leadImport}/rows', [LeadImportController::class, 'rows'])
         ->middleware('permission:leads.import')->name('api.v1.leads.imports.rows');
+
+    /*
+     * Bulk CSV export (FR-LEAD-12, SEC-PII-04). Same bulk-limiter reasoning as
+     * import above: the request kicks off a query over the requester's whole
+     * visible lead set, not a single-row read.
+     *
+     * `leads.export` is in Permission::isAudited(), so EnsurePermission
+     * writes the audit entry for every one of these three routes before the
+     * controller runs (SEC-AUD-02) - request, list and download alike.
+     */
+    Route::post('/export', [LeadExportController::class, 'store'])
+        ->middleware(['permission:leads.export', 'throttle:api-bulk'])
+        ->name('api.v1.leads.export');
+
+    Route::get('/exports', [LeadExportController::class, 'index'])
+        ->middleware('permission:leads.export')->name('api.v1.leads.exports.index');
+    Route::get('/exports/{export}/download', [LeadExportController::class, 'download'])
+        ->middleware('permission:leads.export')->name('api.v1.leads.exports.download');
 
     Route::get('/{lead}', [LeadController::class, 'show'])
         ->middleware('permission:leads.view')->name('api.v1.leads.show');

@@ -176,6 +176,25 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Lead export (FR-LEAD-12, SEC-PII-04)
+    |--------------------------------------------------------------------------
+    | The generated CSV lands on a PRIVATE disk, like the import upload above -
+    | it is a bulk PII payload and must never be reachable over HTTP
+    | (SEC-FILE-02) - and the download window is finite so a stale export
+    | file does not sit downloadable forever (SEC-PII-05).
+    */
+    'exports' => [
+        'disk' => env('LEAD_EXPORT_DISK', 'local'),
+        'directory' => 'exports/leads',
+        'retention_days' => (int) env('LEAD_EXPORT_RETENTION_DAYS', 7),
+        // Rows are streamed to disk in chunks so the job never holds the
+        // whole result set in memory (same reasoning as CsvReader's import
+        // side, mirrored for the write path).
+        'chunk_size' => (int) env('LEAD_EXPORT_CHUNK_SIZE', 500),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Follow-ups (BR-NOTIF-04) - PROPOSED
     |--------------------------------------------------------------------------
     */

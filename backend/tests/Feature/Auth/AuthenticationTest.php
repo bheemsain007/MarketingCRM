@@ -6,14 +6,17 @@ use App\Enums\RoleName;
 use App\Models\AuditLog;
 use App\Models\Role;
 use App\Models\User;
+use App\Models\UserActivityPing;
+use App\Models\UserWorkSession;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
 
 /**
- * Authentication flows (SEC-AUTH-01..06, SEC-AUD-02, FR-ATT-01).
+ * Authentication flows (SEC-AUTH-01..06, SEC-AUD-02, FR-ATT-01, FR-ATT-03).
  */
 class AuthenticationTest extends TestCase
 {
@@ -198,6 +201,48 @@ class AuthenticationTest extends TestCase
         $this->withHeader('Authorization', 'Bearer '.$deskToken)
             ->getJson('/api/v1/auth/me')
             ->assertOk();
+    }
+
+    #[Test]
+    public function logging_out_rolls_up_active_and_idle_time_onto_the_closed_session(): void
+    {
+        // FR-ATT-03: a session closed by a real logout must carry real
+        // active/idle numbers, not the zero defaults it was created with.
+        // Frozen locally and restored below, so the rest of this file keeps
+        // running on the real clock.
+        Carbon::setTestNow(Carbon::parse('2026-08-10 09:00:00', 'Asia/Kolkata'));
+
+        try {
+            $user = $this->user();
+            $this->actingAs($user, 'sanctum');
+
+            $session = UserWorkSession::create([
+                'tenant_id' => config('crm.default_tenant_id'),
+                'user_id' => $user->id,
+                'started_at' => now()->subMinutes(10),
+                'source' => 'web',
+            ]);
+
+            // One ping, ten minutes into the session and right up against
+            // logout - no second ping to form a gap with, so nothing is
+            // credited active and the whole span reads as idle.
+            UserActivityPing::create([
+                'user_id' => $user->id,
+                'work_session_id' => $session->id,
+                'action_type' => 'call',
+                'occurred_at' => now(),
+            ]);
+
+            $this->postJson('/api/v1/auth/logout')->assertOk();
+
+            $session->refresh();
+
+            $this->assertNotNull($session->ended_at);
+            $this->assertSame(0, $session->active_seconds);
+            $this->assertSame(600, $session->idle_seconds);
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     #[Test]

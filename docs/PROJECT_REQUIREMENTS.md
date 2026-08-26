@@ -71,6 +71,7 @@ The brief requires role-based access but does not name the roles. The baseline b
 | FR-LEAD-09 | Activity timeline per lead | Timeline shows calls, messages across all channels, status changes, notes, follow-ups, and payments in one chronological view |
 | FR-LEAD-10 | Automatic assignment for inbound/webhook leads | Method per BR-ASSIGN-01; an unassignable lead is queued and raises a notification, never dropped or force-assigned |
 | FR-LEAD-11 | Repeat enquiries route to the existing owner | A duplicate enquiry does not create a second owner for the same person (BR-ASSIGN-05) |
+| FR-LEAD-12 | CSV export of leads | Manager+ users can export a filtered lead list to CSV, restricted and audited (SEC-PII-04). A Manager+ user can request, list, and download a CSV export of leads matching the same filters as the lead list screen; a Telecaller cannot |
 
 ### 3.2 Lead Status & Temperature
 
