@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Web;
 use App\Enums\CallStatus;
 use App\Enums\CampaignSkipReason;
 use App\Enums\CampaignStatus;
+use App\Enums\Channel;
 use App\Enums\DataScope;
 use App\Enums\DncReason;
+use App\Enums\FollowUpStatus;
 use App\Enums\LeadStatus;
 use App\Enums\LeadTemperature;
 use App\Enums\Permission;
@@ -48,13 +50,21 @@ class PageController extends Controller
      *
      * Resolves the lead server-side purely so an unauthorised URL is a 403 on
      * page load rather than a working page frame that fills with an error.
+     *
+     * Resolved with `withTrashed()` instead of by implicit binding, because an
+     * ARCHIVED lead is exactly where the Restore control has to live: 404-ing
+     * the page would leave `POST /leads/{id}/restore` with no way to reach it
+     * from the browser. The page renders read-only in that state and offers
+     * Restore; the API still refuses every write against an archived lead.
      */
-    public function lead(Request $request, Lead $lead): View
+    public function lead(Request $request, string $lead): View
     {
-        $this->authorize('view', $lead);
+        $model = Lead::withTrashed()->findOrFail($lead);
+
+        $this->authorize('view', $model);
 
         return view('leads.show', [
-            'lead' => $lead,
+            'lead' => $model,
             'statuses' => LeadStatus::cases(),
             'products' => Product::query()->where('is_active', true)->orderBy('name')->get(),
         ]);
@@ -309,5 +319,88 @@ class PageController extends Controller
             'campaign' => $campaign,
             'skipReasons' => CampaignSkipReason::cases(),
         ]);
+    }
+
+    /**
+     * Your own notification list (FR-NOTIF-03).
+     *
+     * No reference data: the rows carry their own type labels, and the unread
+     * count the bell shows comes from the same API the list reads.
+     */
+    public function notifications(): View
+    {
+        return view('notifications.index');
+    }
+
+    /**
+     * Message template authoring (FR-COMM-02).
+     *
+     * The channel list comes from the Channel enum so the form cannot offer a
+     * channel the API would reject.
+     */
+    public function templates(Request $request): View
+    {
+        return view('templates.index', [
+            'channels' => Channel::cases(),
+            'canManage' => $request->user()->hasPermission(Permission::TemplatesManage),
+        ]);
+    }
+
+    /**
+     * The cross-lead follow-up queue (FR-FUP-04).
+     *
+     * Distinct from the per-lead tab: this is "who am I due to call today",
+     * which is the question a telecaller actually opens the CRM to answer.
+     */
+    public function followUps(Request $request): View
+    {
+        return view('follow-ups.index', [
+            'statuses' => FollowUpStatus::cases(),
+            'canManage' => $request->user()->hasPermission(Permission::FollowUpsManage),
+        ]);
+    }
+
+    /**
+     * Why contact attempts were suppressed (BR-DNC-05).
+     *
+     * The campaign screen already breaks down campaign skips; this is the DNC
+     * log itself, which also covers manual and dialer attempts.
+     */
+    public function dncSkips(): View
+    {
+        return view('dnc.skips', [
+            'reasons' => DncReason::cases(),
+        ]);
+    }
+
+    /**
+     * Call history across every lead the caller may see (FR-CALL-05).
+     */
+    public function calls(): View
+    {
+        return view('calls.index', [
+            'callStatuses' => CallStatus::cases(),
+        ]);
+    }
+
+    /**
+     * Sent-message history across every lead the caller may see (FR-COMM-05).
+     */
+    public function messages(): View
+    {
+        return view('messages.index', [
+            'channels' => Channel::cases(),
+        ]);
+    }
+
+    /**
+     * Tag vocabulary management.
+     *
+     * System tags are shown but cannot be edited - Tag::userEditable() is the
+     * authority on which ones a person may change.
+     */
+    public function tags(): View
+    {
+        return view('tags.index');
     }
 }

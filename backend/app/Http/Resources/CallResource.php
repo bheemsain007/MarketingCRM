@@ -36,6 +36,21 @@ class CallResource extends JsonResource
             'dial_source' => $this->dial_source,
             'follow_up_id' => $this->follow_up_id,
 
+            /*
+             * Whether a recording row exists for this call - NOT whether there
+             * are bytes to play, which `/calls/{call}/recording` answers with
+             * the three histories it distinguishes (never captured, in flight,
+             * purged).
+             *
+             * It is here because the alternative is a client probing that
+             * endpoint per row, and reading a recording is AUDITED
+             * (SEC-FILE-04): probing would write an access record for every
+             * call nobody actually listened to. Absent unless the caller asked
+             * for it with `withExists('recording')` - absent means "not asked",
+             * never "no recording".
+             */
+            'has_recording' => $this->whenHas('recording_exists', fn ($exists) => (bool) $exists),
+
             'user' => $this->whenLoaded('user', fn () => $this->user ? [
                 'id' => $this->user->id,
                 'name' => $this->user->name,

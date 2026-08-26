@@ -217,25 +217,60 @@ class CallRecordingService
 
     private function purge(CallRecording $recording): void
     {
+        $this->deleteAudio(
+            $recording,
+            null,
+            'recording_purged',
+            sprintf('Recording for call #%d purged on retention.', $recording->call_id),
+        );
+    }
+
+    /**
+     * Deletes a recording's audio because somebody asked (FR-REC-05, SEC-PII-05).
+     *
+     * Separate from the retention sweep only in WHO deleted it and WHY: the
+     * bytes go the same way and the row survives the same way. Gated on
+     * `recordings.delete`, which is a different permission from listening -
+     * being allowed to hear a recording is not being allowed to destroy it.
+     */
+    public function deleteManually(CallRecording $recording, ?User $actor = null): void
+    {
+        $this->deleteAudio(
+            $recording,
+            $actor?->id,
+            'recording_deleted',
+            sprintf('Recording for call #%d deleted on request.', $recording->call_id),
+        );
+    }
+
+    /**
+     * Removes the bytes and leaves the row, audited.
+     *
+     * Shared by the retention sweep and a deliberate deletion so there is one
+     * definition of what "deleted" means to a recording - the audit action is
+     * what tells the two apart afterwards.
+     */
+    private function deleteAudio(CallRecording $recording, ?int $actorId, string $action, string $description): void
+    {
         $disk = Storage::disk($recording->storage_disk);
 
         if ($recording->storage_path !== null && $disk->exists($recording->storage_path)) {
             $disk->delete($recording->storage_path);
         }
 
-        DB::transaction(function () use ($recording) {
+        DB::transaction(function () use ($recording, $actorId, $action, $description) {
             $recording->forceFill([
                 'storage_path' => null,
                 'upload_status' => 'purged',
                 'failure_reason' => null,
             ])->save();
 
-            // Audited because the requirement says so, and because an automatic
-            // deletion nobody can account for is worse than no deletion.
+            // Audited because the requirement says so, and because a deletion
+            // nobody can account for is worse than no deletion.
             AuditLog::create([
-                'user_id' => null,
-                'action' => 'recording_purged',
-                'description' => sprintf('Recording for call #%d purged on retention.', $recording->call_id),
+                'user_id' => $actorId,
+                'action' => $action,
+                'description' => $description,
                 'new_values' => [
                     'call_recording_id' => $recording->id,
                     'call_id' => $recording->call_id,

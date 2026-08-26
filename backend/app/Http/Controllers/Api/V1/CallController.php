@@ -49,7 +49,10 @@ class CallController extends Controller
             allowedSorts: ['started_at', 'duration_seconds'],
         );
 
-        $query = $lead->calls()->getQuery()->with('user');
+        // `withExists` rather than eager-loading the recording: the list only
+        // needs to know whether to offer playback, and the recording's own
+        // metadata endpoint is audited, so it must not be touched per row.
+        $query = $lead->calls()->getQuery()->with('user')->withExists('recording');
 
         $calls = $options->applyTo($query)->paginate($options->perPage());
 

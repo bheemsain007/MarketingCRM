@@ -107,4 +107,29 @@ class CallRecordingController extends Controller
             sprintf('call-%d-recording.%s', $call->id, pathinfo($recording->storage_path, PATHINFO_EXTENSION) ?: 'audio'),
         );
     }
+
+    /**
+     * Deletes a recording's audio on request (FR-REC-05, SEC-PII-05).
+     *
+     * `recordings.delete` is its own permission and its own audit entry: being
+     * trusted to listen to a recording is not being trusted to destroy one. The
+     * ROW survives with its path nulled, so "there was a recording and it was
+     * deleted" stays distinguishable from "there never was one" (BR-REC-02).
+     */
+    public function destroy(Request $request, Call $call): JsonResponse
+    {
+        // The permission says the caller may delete recordings at all; the
+        // policy says whether THIS call is one of theirs to touch.
+        $this->authorize('view', $call);
+
+        $recording = $call->recording;
+
+        if ($recording === null) {
+            throw new ApiException(ErrorCode::NotFound, 'This call has no recording.');
+        }
+
+        $this->recordings->deleteManually($recording, $request->user());
+
+        return ApiResponse::success(message: 'Recording deleted.');
+    }
 }

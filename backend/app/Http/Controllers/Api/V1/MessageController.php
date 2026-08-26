@@ -46,7 +46,9 @@ class MessageController extends Controller
             allowedIncludes: ['template', 'user'],
         );
 
-        $query = $lead->messages()->with(['template:id,name,code', 'user:id,name'])->latest('created_at');
+        // `getQuery()` because QueryOptions takes a Builder and a relation is
+        // not one - without it every GET of a lead's thread is a TypeError.
+        $query = $lead->messages()->getQuery()->with(['template:id,name,code', 'user:id,name'])->latest('created_at');
 
         return ApiResponse::paginated(
             MessageResource::collection($options->applyTo($query)->paginate($options->perPage())),
@@ -119,7 +121,9 @@ class MessageController extends Controller
             allowedIncludes: ['template', 'user'],
         );
 
-        $query = Message::query()->with(['template:id,name,code', 'user:id,name']);
+        // The lead comes along here and not in `index()`: a cross-lead list has
+        // to say whose message each row is.
+        $query = Message::query()->with(['template:id,name,code', 'user:id,name', 'lead:id,name']);
 
         // Scoped through the lead, exactly as the DNC list is - message history
         // is lead data and a telecaller sees their own book (SEC-AUTHZ-03).

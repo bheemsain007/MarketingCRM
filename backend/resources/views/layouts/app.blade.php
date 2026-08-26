@@ -75,6 +75,24 @@
     </a>
     @endpermission
 
+    @permission('follow_ups.view')
+    <a href="{{ route('web.follow-ups') }}" class="{{ request()->routeIs('web.follow-ups') ? 'active' : '' }}">
+        <i class="bi bi-calendar-check me-2"></i>Follow-ups
+    </a>
+    @endpermission
+
+    @permission('calls.view')
+    <a href="{{ route('web.calls') }}" class="{{ request()->routeIs('web.calls') ? 'active' : '' }}">
+        <i class="bi bi-telephone me-2"></i>Call History
+    </a>
+    @endpermission
+
+    @permission('leads.view')
+    <a href="{{ route('web.messages') }}" class="{{ request()->routeIs('web.messages') ? 'active' : '' }}">
+        <i class="bi bi-chat-dots me-2"></i>Messages
+    </a>
+    @endpermission
+
     @permission('leads.import')
     <a href="{{ route('web.imports') }}" class="{{ request()->routeIs('web.imports') ? 'active' : '' }}">
         <i class="bi bi-upload me-2"></i>Imports
@@ -123,15 +141,33 @@
     </a>
     @endpermission
 
+    @permission('templates.view')
+    <a href="{{ route('web.templates') }}" class="{{ request()->routeIs('web.templates') ? 'active' : '' }}">
+        <i class="bi bi-file-earmark-text me-2"></i>Templates
+    </a>
+    @endpermission
+
     @permission('dnc.view')
     <a href="{{ route('web.dnc') }}" class="{{ request()->routeIs('web.dnc') ? 'active' : '' }}">
         <i class="bi bi-slash-circle me-2"></i>Do Not Contact
     </a>
     @endpermission
 
+    @permission('dnc.view')
+    <a href="{{ route('web.dnc.skips') }}" class="{{ request()->routeIs('web.dnc.skips') ? 'active' : '' }}">
+        <i class="bi bi-shield-slash me-2"></i>Suppressed Attempts
+    </a>
+    @endpermission
+
     @permission('products.view')
     <a href="{{ route('web.products') }}" class="{{ request()->routeIs('web.products') ? 'active' : '' }}">
         <i class="bi bi-box-seam me-2"></i>Products
+    </a>
+    @endpermission
+
+    @permission('settings.manage')
+    <a href="{{ route('web.tags') }}" class="{{ request()->routeIs('web.tags') ? 'active' : '' }}">
+        <i class="bi bi-tags me-2"></i>Tags
     </a>
     @endpermission
 </nav>
@@ -141,6 +177,25 @@
         <div class="d-flex align-items-center justify-content-between px-4 py-2">
             <h1 class="h5 mb-0">@yield('title', 'CRM')</h1>
             <div class="d-flex align-items-center gap-3">
+                {{--
+                    The bell is the ONLY entry point to the notifications screen
+                    - there is deliberately no sidebar entry, because a list of
+                    your own alerts is not a section of the CRM, it is a state
+                    of it (FR-NOTIF-01). Which is why it lives in the shell.
+                --}}
+                <a href="{{ route('web.notifications') }}" id="crm-bell"
+                   class="position-relative text-muted text-decoration-none lh-1"
+                   aria-label="Notifications" title="Notifications">
+                    <i class="bi bi-bell fs-5"></i>
+                    {{--
+                        Starts hidden and stays hidden at zero. The count only
+                        arrives by AJAX, so rendering it now would flash a "0"
+                        that is not yet an answer - and "0 unread" is a badge
+                        asking for attention it does not need.
+                    --}}
+                    <span id="crm-bell-count"
+                          class="position-absolute top-0 start-100 translate-middle badge rounded-pill text-bg-danger d-none"></span>
+                </a>
                 <a href="{{ route('web.account') }}" class="text-muted small text-decoration-none">
                     {{ auth()->user()?->name }}
                 </a>
@@ -220,6 +275,66 @@ const CRM = {
 // than leaving a dead page that silently fails every action.
 $(document).ajaxError(function (event, xhr) {
     if (xhr.status === 401) window.location = '{{ route('web.login') }}';
+});
+</script>
+<script>
+/*
+ * The notification bell (FR-NOTIF-01).
+ *
+ * Here rather than on a page because the point of it is to reach someone who
+ * is NOT looking at the notifications screen - a lead assigned to you while
+ * you are three levels into the dialer is exactly the case the in-app channel
+ * exists to cover (BR-NOTIF-03).
+ */
+$(function () {
+    const bell = $('#crm-bell');
+    const badge = $('#crm-bell-count');
+
+    function paint(count) {
+        if (!count) {
+            badge.addClass('d-none').text('');
+            bell.attr('aria-label', 'Notifications');
+
+            return;
+        }
+
+        // Capped: past a hundred the exact number stops changing the decision,
+        // and a four-digit badge stops fitting on the icon.
+        badge.removeClass('d-none').text(count > 99 ? '99+' : count);
+        bell.attr('aria-label', 'Notifications (' + count + ' unread)');
+    }
+
+    function refresh() {
+        // Silent on failure, deliberately. A dropped count is not something
+        // the user can act on, and a toast for every flaky poll would teach
+        // them to ignore the alert bar that real errors use. Session loss is
+        // already handled by the global 401 handler above.
+        $.getJSON('/api/v1/notifications/unread-count').done(function (response) {
+            paint(response.data.unread_count);
+        });
+    }
+
+    /*
+     * 60s. The query is an indexed COUNT on one user's rows, so a floor full
+     * of telecallers costs one cheap query each per minute - and a minute is
+     * short enough that work assigned to you surfaces while you are still at
+     * your desk, which is the whole point of a badge over an email.
+     */
+    setInterval(function () {
+        if (!document.hidden) refresh();
+    }, 60000);
+
+    // A backgrounded tab skips its polls, so catch it up the instant it comes
+    // forward rather than showing a stale count for up to a minute.
+    $(document).on('visibilitychange', function () {
+        if (!document.hidden) refresh();
+    });
+
+    // The notifications screen moves the count itself; let it repaint the bell
+    // instead of leaving the badge wrong until the next poll.
+    window.crmRefreshBell = refresh;
+
+    refresh();
 });
 </script>
 @stack('scripts')

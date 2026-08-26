@@ -14,6 +14,18 @@
 @section('title', 'Do Not Contact')
 
 @section('content')
+    {{-- FR-DNC-01: somebody phones in and asks to be taken off the list. Until
+         now that request could only be honoured by triggering an outcome that
+         happens to suppress - the automatic sources (BR-DNC-07) were the only
+         way in. --}}
+    @permission('dnc.create')
+        <div class="d-flex justify-content-end mb-3">
+            <button type="button" id="add-open" class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg me-1"></i>Add to DNC
+            </button>
+        </div>
+    @endpermission
+
     <div class="card mb-3">
         <div class="card-body py-3">
             <div class="row g-2 align-items-end">
@@ -104,6 +116,68 @@
             </div>
         </div>
     </div>
+
+    {{-- Manual suppression (FR-DNC-01). The lead is picked by searching the
+         API rather than typed as an id: the search is data-scoped, so a
+         telecaller can only suppress leads they are already allowed to see -
+         the same rule the POST enforces server-side. --}}
+    @permission('dnc.create')
+        <div class="modal fade" id="add-modal" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title h6">Add to Do Not Contact</h2>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <label class="form-label small mb-1" for="add-lead-q">
+                            Lead <span class="text-danger">*</span>
+                        </label>
+                        <div class="input-group input-group-sm mb-2">
+                            <input type="search" id="add-lead-q" class="form-control"
+                                   placeholder="Name, company, phone or email">
+                            <button class="btn btn-outline-secondary" type="button" id="add-lead-search">Search</button>
+                        </div>
+                        <select id="add-lead" class="form-select form-select-sm">
+                            <option value="">Search for a lead first</option>
+                        </select>
+                        <div class="invalid-feedback"></div>
+
+                        <label class="form-label small mb-1 mt-3" for="add-reason">
+                            Reason <span class="text-danger">*</span>
+                        </label>
+                        <select id="add-reason" class="form-select form-select-sm">
+                            @foreach ($reasons as $reason)
+                                <option value="{{ $reason->value }}">{{ $reason->label() }}</option>
+                            @endforeach
+                        </select>
+                        <div class="invalid-feedback"></div>
+
+                        <label class="form-label small mb-1 mt-3" for="add-channel">Channel</label>
+                        <select id="add-channel" class="form-select form-select-sm">
+                            {{-- Left empty on purpose: the reason already decides
+                                 which channels it blocks (BR-DNC-02), and naming a
+                                 channel here NARROWS the entry to that one. --}}
+                            <option value="">Everything this reason blocks</option>
+                            @foreach (\App\Enums\Channel::cases() as $case)
+                                <option value="{{ $case->value }}">Only {{ $case->label() }}</option>
+                            @endforeach
+                        </select>
+                        <div class="invalid-feedback"></div>
+
+                        <label class="form-label small mb-1 mt-3" for="add-note">Note</label>
+                        <textarea id="add-note" class="form-control form-control-sm" rows="2" maxlength="1000"
+                                  placeholder="e.g. Asked to be removed during a call on 14 March"></textarea>
+                        <div class="invalid-feedback"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-sm btn-primary" id="confirm-add">Add suppression</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    @endpermission
 @endsection
 
 @push('scripts')
@@ -112,7 +186,10 @@ $(function () {
     let page = 1;
     let removing = null;
     const canRemove = @json(auth()->user()->hasPermission(App\Enums\Permission::DncRemove));
+    const canCreate = @json(auth()->user()->hasPermission(App\Enums\Permission::DncCreate));
     const modal = new bootstrap.Modal(document.getElementById('remove-modal'));
+    // The add modal only exists in the markup for a holder of dnc.create.
+    const addModal = canCreate ? new bootstrap.Modal(document.getElementById('add-modal')) : null;
 
     function load() {
         const params = { page: page };
@@ -227,6 +304,98 @@ $(function () {
             })
             .always(function () { $('#confirm-remove').prop('disabled', false); });
     });
+
+    if (canCreate) {
+        // Field name -> control, so a 422 lands on the input that caused it
+        // instead of a toast that makes the user guess.
+        const addFields = {
+            lead_id: '#add-lead',
+            reason: '#add-reason',
+            channel: '#add-channel',
+            note: '#add-note'
+        };
+
+        function clearAddErrors() {
+            $.each(addFields, function (field, selector) {
+                $(selector).removeClass('is-invalid').next('.invalid-feedback').text('');
+            });
+        }
+
+        function searchLeads() {
+            const q = $('#add-lead-q').val();
+            if (!q) return;
+
+            $('#add-lead-search').prop('disabled', true);
+
+            $.getJSON('/api/v1/leads', { q: q, per_page: 20 })
+                .done(function (response) {
+                    const items = response.data.items;
+
+                    $('#add-lead').html(items.length
+                        ? items.map(function (lead) {
+                            return '<option value="' + lead.id + '">'
+                                + CRM.escape(lead.name + ' — ' + (lead.phone_formatted || lead.phone))
+                                + '</option>';
+                        }).join('')
+                        : '<option value="">No lead matches that search</option>');
+                })
+                .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); })
+                .always(function () { $('#add-lead-search').prop('disabled', false); });
+        }
+
+        $('#add-open').on('click', function () {
+            $('#add-lead-q').val('');
+            $('#add-lead').html('<option value="">Search for a lead first</option>');
+            $('#add-note').val('');
+            $('#add-channel').val('');
+            clearAddErrors();
+            addModal.show();
+        });
+
+        $('#add-lead-search').on('click', searchLeads);
+        $('#add-lead-q').on('keypress', function (e) { if (e.which === 13) { e.preventDefault(); searchLeads(); } });
+
+        $('#confirm-add').on('click', function () {
+            $('#confirm-add').prop('disabled', true);
+            clearAddErrors();
+
+            const data = { lead_id: $('#add-lead').val(), reason: $('#add-reason').val() };
+
+            // Both are optional, and a blank channel must be OMITTED rather than
+            // sent empty - an empty string is not a valid Channel case.
+            const channel = $('#add-channel').val();
+            if (channel) data.channel = channel;
+
+            const note = $('#add-note').val();
+            if (note) data.note = note;
+
+            $.ajax({ url: '/api/v1/dnc', method: 'POST', data: data })
+                .done(function (response) {
+                    addModal.hide();
+                    CRM.alert(response.message, 'success');
+                    page = 1;
+                    load();
+                })
+                .fail(function (xhr) {
+                    const errors = (xhr.responseJSON || {}).errors || [];
+                    let mapped = false;
+
+                    errors.forEach(function (error) {
+                        const selector = addFields[error.field];
+                        if (!selector) return;
+
+                        $(selector).addClass('is-invalid').next('.invalid-feedback').text(error.message);
+                        mapped = true;
+                    });
+
+                    if (!mapped) {
+                        addModal.hide();
+                        CRM.alert(CRM.errorFrom(xhr));
+                    }
+                })
+                .always(function () { $('#confirm-add').prop('disabled', false); });
+        });
+    }
 
     $('#f-apply').on('click', function () { page = 1; load(); });
     $('#f-q').on('keypress', function (e) { if (e.which === 13) { page = 1; load(); } });

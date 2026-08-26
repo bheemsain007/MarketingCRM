@@ -27,6 +27,7 @@ use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\QuotationController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\SettingsController;
+use App\Http\Controllers\Api\V1\TagController;
 use App\Http\Controllers\Api\V1\TemplateController;
 use App\Http\Controllers\Api\V1\TwoFactorAdminController;
 use App\Http\Controllers\Api\V1\UserController;
@@ -645,6 +646,37 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('settings')
 
 /*
 |--------------------------------------------------------------------------
+| Tag vocabulary (FR-LEAD-03, BR-INT-02)
+|--------------------------------------------------------------------------
+| Two gates, and the split is the same one products use. Reading takes
+| `leads.view`, because a tag name is lead data - it is rendered on the lead
+| list, the lead form and the timeline, and a telecaller who could not read the
+| vocabulary could not label anything. Writing takes `settings.manage`: the tag
+| list is organisation reference data, and changing it changes what every lead
+| in the CRM can be labelled with.
+|
+| DELETE really deletes. `tags` has no `deleted_at` column and `lead_tag`
+| cascades, so unlike products and templates there is no archive to fall back
+| on - which is why TagService returns the number of leads that lost the label
+| and the screen states it before asking. System tags are refused to everyone,
+| including Super Admin (TagPolicy).
+*/
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('tags')->group(function () {
+    Route::get('/', [TagController::class, 'index'])
+        ->middleware('permission:leads.view')->name('api.v1.tags.index');
+
+    Route::post('/', [TagController::class, 'store'])
+        ->middleware('permission:settings.manage')->name('api.v1.tags.store');
+
+    Route::patch('/{tag}', [TagController::class, 'update'])
+        ->middleware('permission:settings.manage')->name('api.v1.tags.update');
+
+    Route::delete('/{tag}', [TagController::class, 'destroy'])
+        ->middleware('permission:settings.manage')->name('api.v1.tags.destroy');
+});
+
+/*
+|--------------------------------------------------------------------------
 | Suppression / DNC (Phase 19 admin surface, brought forward)
 |--------------------------------------------------------------------------
 | Suppression has been written since Phase 7 - by `Not Interested` and by call
@@ -663,6 +695,11 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('dnc')->gro
     // "skips" is never bound as a route parameter.
     Route::get('/skips', [DncController::class, 'skips'])
         ->middleware('permission:dnc.view')->name('api.v1.dnc.skips');
+
+    // The rows behind those totals - which people we did not reach, and why
+    // (BR-DNC-05). Data-scoped, unlike the aggregate, because it names them.
+    Route::get('/skips/log', [DncController::class, 'skipLog'])
+        ->middleware('permission:dnc.view')->name('api.v1.dnc.skips.log');
 
     Route::post('/', [DncController::class, 'store'])
         ->middleware('permission:dnc.create')->name('api.v1.dnc.store');
@@ -703,6 +740,11 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('calls')->g
     Route::get('/{call}/recording/audio', [CallRecordingController::class, 'audio'])
         ->middleware(['signed', 'permission:recordings.listen'])
         ->name('api.v1.calls.recording.audio');
+
+    // Deleting is its own permission, not a consequence of listening
+    // (SEC-PII-05) - and audited, like every other use of `recordings.delete`.
+    Route::delete('/{call}/recording', [CallRecordingController::class, 'destroy'])
+        ->middleware('permission:recordings.delete')->name('api.v1.calls.recording.destroy');
 });
 
 /*

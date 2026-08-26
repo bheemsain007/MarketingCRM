@@ -39,6 +39,14 @@ class MessageResource extends JsonResource
             // answerable without reading application logs.
             'provider' => $this->provider,
 
+            /*
+             * Absent unless the caller eager-loaded it. The per-lead thread does
+             * not - the lead is the page you are already on - but cross-lead
+             * history has to name whose message each row is, and an id alone
+             * makes that screen unreadable.
+             */
+            'lead' => $this->whenLoaded('lead', fn () => $this->lead?->only(['id', 'name'])),
+
             'template' => $this->whenLoaded('template', fn () => $this->template?->only(['id', 'name', 'code'])),
             'sent_by' => $this->whenLoaded('user', fn () => $this->user?->only(['id', 'name'])),
 

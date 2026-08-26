@@ -7,12 +7,14 @@ use App\Enums\DataScope;
 use App\Enums\DncReason;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Dnc\RemoveDncEntryRequest;
+use App\Http\Requests\Dnc\SkipLogRequest;
 use App\Http\Requests\Dnc\StoreDncEntryRequest;
 use App\Http\Resources\DncEntryResource;
 use App\Models\DncEntry;
 use App\Models\Lead;
 use App\Services\Dnc\DncService;
 use App\Services\Reports\SuppressionReportService;
+use App\Services\Reports\SuppressionSkipLog;
 use App\Support\ApiResponse;
 use App\Support\QueryOptions;
 use App\Support\Reporting\ReportPeriod;
@@ -101,6 +103,35 @@ class DncController extends Controller
             'period' => $period->toArray(),
             'report' => $reports->report($period),
         ], 'Suppression report generated.');
+    }
+
+    /**
+     * The row-level skip log behind that report (BR-DNC-05, FR-DNC-03).
+     *
+     * `skips` gives the totals; this names the people. A compliance question is
+     * never "how many" - it is "did you contact this person after they asked
+     * you not to", and only the log can answer it.
+     *
+     * Scoped through the lead, unlike the aggregate: these rows carry names and
+     * phone numbers (SEC-AUTHZ-03).
+     */
+    public function skipLog(SkipLogRequest $request, SuppressionSkipLog $log): JsonResponse
+    {
+        $this->authorize('viewAny', DncEntry::class);
+
+        $period = ReportPeriod::fromRequest($request);
+
+        $attempts = $log->paginate(
+            $request->user(),
+            $period,
+            $request->filters(),
+            $request->filled('q') ? $request->string('q')->toString() : null,
+            (new QueryOptions($request))->perPage(),
+        );
+
+        // The window travels with the rows so a screen can state which days it
+        // is showing rather than implying "everything".
+        return ApiResponse::paginated($attempts, 'Suppressed attempts retrieved.', ['period' => $period->toArray()]);
     }
 
     /**

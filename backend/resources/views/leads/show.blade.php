@@ -2,6 +2,14 @@
 @section('title', $lead->name)
 
 @section('content')
+@php
+    // Archived state comes from the model's own soft delete, the same fact
+    // LeadResource publishes as `is_archived`. Every write endpoint resolves
+    // the lead by implicit binding and 404s on a trashed one, so the page shows
+    // the record read-only rather than offering controls that cannot work.
+    $isArchived = $lead->trashed();
+@endphp
+
 <div class="row g-3">
     {{-- ---------------------------------------------------------------- --}}
     {{-- Left: identity and status                                        --}}
@@ -20,6 +28,16 @@
                         {{ $lead->status->label() }}
                     </span>
                 </div>
+
+                @if ($isArchived)
+                    {{-- FR-LEAD-06. Archiving hides a lead; it deletes nothing,
+                         and saying so is what stops somebody re-entering the
+                         lead by hand because they think it is gone. --}}
+                    <div class="alert alert-secondary py-2 px-3 small mt-3 mb-0" id="archived-banner">
+                        <strong>Archived.</strong> This lead is out of every list, queue and dialler run.
+                        Nothing has been deleted — restore it to work on it again.
+                    </div>
+                @endif
 
                 @if ($lead->is_suppressed)
                     {{-- The flag is a cache; DncService is the authority. Shown
@@ -46,10 +64,85 @@
                     <dd class="col-8">{{ $lead->created_at?->format('d M Y') }}</dd>
                 </dl>
 
+                <div class="mt-3 d-flex flex-wrap gap-1">
+                    @unless ($isArchived)
+                        @permission('leads.update')
+                            <a href="{{ route('web.leads.edit', $lead) }}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil me-1"></i>Edit details
+                            </a>
+                        @endpermission
+                    @endunless
+
+                    {{--
+                        Archive / restore (FR-LEAD-06, SEC-AUTHZ-04).
+
+                        One control with two faces, driven by the lead's own
+                        archived state: offering "Archive" on a lead that is
+                        already archived is how you get somebody clicking it and
+                        deciding the page is broken.
+                    --}}
+                    @permission('leads.archive')
+                        @if ($isArchived)
+                            {{-- Restoring is recoverable and expected, so it is a
+                                 plain button; archiving is the one that asks. --}}
+                            <button class="btn btn-sm btn-outline-success" id="lead-restore">
+                                <i class="bi bi-arrow-counterclockwise me-1"></i>Restore lead
+                            </button>
+                        @else
+                            <button class="btn btn-sm btn-outline-danger" id="lead-archive"
+                                    data-bs-toggle="modal" data-bs-target="#archive-modal">
+                                <i class="bi bi-archive me-1"></i>Archive lead
+                            </button>
+                        @endif
+                    @endpermission
+                </div>
+            </div>
+        </div>
+
+        {{-- Nothing below is drawn for an archived lead: every /leads/{lead}/*
+             endpoint 404s on a trashed one, so these cards could only fail. --}}
+        @unless ($isArchived)
+        {{--
+            Why this lead has the score it has (BR-SCORE-01, FR-INT-01).
+
+            The requirement is that a telecaller can see *why* a lead is Hot. A
+            bare number cannot answer that, and a score nobody understands is a
+            score nobody trusts - so the breakdown the API computed is drawn in
+            full, decay included.
+        --}}
+        <div class="card mb-3" id="score-card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <h3 class="h6 mb-0">Interest score</h3>
+                    <span class="badge text-bg-secondary" id="score-temperature">…</span>
+                </div>
+
+                <div class="d-flex align-items-baseline gap-2 mt-2">
+                    <span class="h3 mb-0" id="score-value">—</span>
+                    <span class="text-muted small" id="score-raw"></span>
+                </div>
+
+                <div class="progress mt-2" style="height:.4rem">
+                    <div class="progress-bar" id="score-bar" style="width:0"></div>
+                </div>
+
+                <div id="score-lines" class="mt-3">
+                    <p class="text-muted small mb-0">Loading…</p>
+                </div>
+
+                <div class="text-muted mt-2" style="font-size:.78rem" id="score-engagement"></div>
+
                 @permission('leads.update')
-                    <a href="{{ route('web.leads.edit', $lead) }}" class="btn btn-sm btn-outline-secondary mt-3">
-                        <i class="bi bi-pencil me-1"></i>Edit details
-                    </a>
+                    {{--
+                        The dedicated interest signal (FR-INT-01), which is what
+                        feeds the number above. Distinct from the Products tab's
+                        per-product interest state: that records WHAT they want,
+                        this records that they said so, and only this one scores.
+                    --}}
+                    <button class="btn btn-sm btn-outline-primary mt-3" id="signal-open"
+                            data-bs-toggle="modal" data-bs-target="#signal-modal">
+                        <i class="bi bi-graph-up-arrow me-1"></i>Record an interest signal
+                    </button>
                 @endpermission
             </div>
         </div>
@@ -119,12 +212,32 @@
             </div>
         </div>
         @endpermission
+        @endunless
     </div>
 
     {{-- ---------------------------------------------------------------- --}}
     {{-- Right: products, notes, history                                  --}}
     {{-- ---------------------------------------------------------------- --}}
     <div class="col-lg-8">
+        @if ($isArchived)
+            {{--
+                Every /leads/{lead}/* endpoint resolves the lead by implicit
+                binding, so an archived lead has no working data endpoints at
+                all - calls, notes, timeline and score would each answer 404.
+                Saying that plainly beats a page of tabs quietly failing to
+                fill (ADR-A: the page never queries the database itself).
+            --}}
+            <div class="card">
+                <div class="card-body">
+                    <h3 class="h6">This lead's history is hidden while it is archived</h3>
+                    <p class="small text-muted mb-0">
+                        Calls, notes, messages, follow-ups, deals and the interest score are all kept and
+                        none of them have been deleted. Restore the lead to work on it and to see them
+                        again.
+                    </p>
+                </div>
+            </div>
+        @else
         <div class="card">
             <div class="card-header p-0">
                 <ul class="nav nav-tabs card-header-tabs m-0 px-2 pt-2" role="tablist">
@@ -155,6 +268,14 @@
                     --}}
                     <div id="call-blocked" class="alert alert-warning py-2 px-3 small d-none"></div>
 
+                    {{--
+                        AI calling being unconfigured is a fact about the
+                        installation, true until somebody adds the credential in
+                        Settings - so it stays on the page instead of flashing
+                        past in a toast (SEC-CFG-04).
+                    --}}
+                    <div id="ai-call-blocked" class="alert alert-secondary py-2 px-3 small d-none"></div>
+
                     <div class="row g-2 align-items-end border-bottom pb-3 mb-3" id="call-form">
                         <div class="col-md-4">
                             <label class="form-label small mb-1" for="call-outcome">Log a call</label>
@@ -180,13 +301,37 @@
                             <input type="text" id="call-notes" class="form-control form-control-sm mt-1"
                                    maxlength="5000" placeholder="Notes (optional)">
                         </div>
+
+                        {{--
+                            The AI call (FR-AI-01) lives INSIDE #call-form on
+                            purpose. That container is shown and hidden by the
+                            /callability verdict, so DNC and calling hours gate
+                            the AI dial with the same answer that gates the
+                            manual one - a second check here is a second place
+                            for BR-CALL-04 to drift.
+                        --}}
+                        <div class="col-md-9">
+                            <input type="text" id="ai-script" class="form-control form-control-sm mt-1"
+                                   maxlength="2000"
+                                   placeholder="Script for the AI (optional — blank uses the configured one)">
+                        </div>
+                        <div class="col-md-3 d-grid">
+                            <button id="ai-call" class="btn btn-sm btn-outline-primary mt-1">
+                                <i class="bi bi-robot me-1"></i>AI call
+                            </button>
+                        </div>
                     </div>
                     @endpermission
 
                     <div class="table-responsive">
                         <table class="table table-sm align-middle mb-0">
                             <thead class="small text-muted">
-                            <tr><th>When</th><th>Outcome</th><th>Duration</th><th>By</th><th>Notes</th></tr>
+                            <tr><th>When</th><th>Outcome</th><th>Duration</th><th>By</th><th>Notes</th>
+                                {{-- Recordings are a separate, audited permission
+                                     (SEC-FILE-04): a role that may not listen does
+                                     not get a column telling it audio exists. --}}
+                                @permission('recordings.listen')<th>Recording</th>@endpermission
+                            </tr>
                             </thead>
                             <tbody id="call-rows"></tbody>
                         </table>
@@ -394,8 +539,152 @@
                 </div>
             </div>
         </div>
+        @endif
     </div>
 </div>
+
+{{-- ---------------------------------------------------------------------- --}}
+{{-- Modals                                                                  --}}
+{{-- ---------------------------------------------------------------------- --}}
+
+@permission('leads.archive')
+@unless ($isArchived)
+    {{-- Archiving reads as destructive even though it is not, so it asks first
+         and says plainly what it does and does not do (FR-LEAD-06). --}}
+    <div class="modal fade" id="archive-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h6">Archive this lead</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small mb-2">
+                        <strong>{{ $lead->name }}</strong> leaves every list, queue and dialler run.
+                    </p>
+                    <p class="small text-muted mb-3">
+                        Nothing is deleted. Calls, notes, messages and status history are kept, and the
+                        lead can be restored from this page.
+                    </p>
+
+                    <label class="form-label small mb-1" for="archive-reason">Reason (optional)</label>
+                    <input type="text" id="archive-reason" class="form-control form-control-sm" maxlength="255"
+                           placeholder="Why is this lead being archived?">
+                    <div class="invalid-feedback"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-danger" id="archive-confirm">Archive lead</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endunless
+@endpermission
+
+@unless ($isArchived)
+@permission('leads.update')
+    {{--
+        Manual interest capture (FR-INT-01, BR-INT-01).
+
+        Four fields, so a modal rather than an inline row. This is the SCORING
+        signal and is deliberately separate from the Products tab's interest
+        state: one records that the lead said something, the other records which
+        product they said it about.
+    --}}
+    <div class="modal fade" id="signal-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h6">Record an interest signal</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-2">
+                        <div class="col-12">
+                            <label class="form-label small mb-1" for="signal-type">What happened</label>
+                            <select id="signal-type" class="form-select form-select-sm">
+                                @foreach (\App\Enums\InterestSignalType::cases() as $case)
+                                    {{-- The AI signal is omitted: it carries a model
+                                         confidence that only Vaaad can supply, and a
+                                         human claiming one would be fabricating
+                                         evidence the score is weighted by (BR-INT-04). --}}
+                                    @unless ($case->isAiDetected())
+                                        <option value="{{ $case->value }}"
+                                                @selected($case === \App\Enums\InterestSignalType::InterestStated)>
+                                            {{ $case->label() }}
+                                        </option>
+                                    @endunless
+                                @endforeach
+                            </select>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="col-md-7">
+                            <label class="form-label small mb-1" for="signal-product">Product (optional)</label>
+                            <select id="signal-product" class="form-select form-select-sm">
+                                <option value="">Not product-specific</option>
+                                @foreach ($products as $product)
+                                    <option value="{{ $product->id }}">{{ $product->name }}</option>
+                                @endforeach
+                            </select>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="col-md-5">
+                            <label class="form-label small mb-1" for="signal-channel">Channel (optional)</label>
+                            <select id="signal-channel" class="form-select form-select-sm">
+                                <option value="">—</option>
+                                @foreach (\App\Enums\Channel::cases() as $case)
+                                    <option value="{{ $case->value }}">{{ $case->label() }}</option>
+                                @endforeach
+                            </select>
+                            <div class="invalid-feedback"></div>
+                        </div>
+
+                        <div class="col-12">
+                            <label class="form-label small mb-1" for="signal-excerpt">What they said (optional)</label>
+                            <textarea id="signal-excerpt" class="form-control form-control-sm" rows="2"
+                                      maxlength="2000" placeholder="Their words, so the score can be defended later"></textarea>
+                            <div class="invalid-feedback"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-primary" id="signal-save">Record signal</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endpermission
+@endunless
+
+@permission('recordings.delete')
+    {{-- Deleting a recording destroys evidence, so it asks - and says what
+         survives, because the row does (BR-REC-02). --}}
+    <div class="modal fade" id="rec-delete-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h6">Delete this recording</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small mb-2" id="rec-delete-call"></p>
+                    <p class="small text-muted mb-0">
+                        The audio is deleted permanently and cannot be recovered. The call itself, and the
+                        record that it was recorded and then deleted, are kept.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-sm btn-danger" id="rec-delete-confirm">Delete audio</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endpermission
 @endsection
 
 @push('scripts')
@@ -403,6 +692,17 @@
 $(function () {
     const leadId = {{ $lead->id }};
     const base = '/api/v1/leads/' + leadId;
+
+    // Read into JS because these decide markup that JS draws, not markup Blade
+    // draws. Hiding a control is usability only - the route middleware and the
+    // policies are what actually refuse the action.
+    const isArchived = @json($isArchived);
+    const canListen = @json(auth()->user()->hasPermission('recordings.listen'));
+    const canDeleteRecording = @json(auth()->user()->hasPermission('recordings.delete'));
+
+    // The Recording column only exists for a role that may listen, so the
+    // "no calls yet" row has to span a different number of cells for each.
+    const callColumns = canListen ? 6 : 5;
 
     // ------------------------------------------------------------ assignment
     // The card is only rendered for holders of leads.assign, so everything
@@ -472,6 +772,174 @@ $(function () {
 
         loadAssignees();
     }
+
+    // ----------------------------------------------------------------- score
+    // BR-SCORE-01: the score is DERIVED from the signals every time, so the
+    // breakdown below is the same arithmetic the number came from - not a
+    // second, drifting explanation of it.
+    const temperatureTone = { hot: 'danger', warm: 'warning', cold: 'info', dormant: 'secondary' };
+    const temperatureLabel = { hot: 'Hot', warm: 'Warm', cold: 'Cold', dormant: 'Dormant' };
+
+    function loadScore() {
+        $.getJSON(base + '/score').done(function (response) {
+            const data = response.data;
+            const tone = temperatureTone[data.temperature] || 'secondary';
+
+            $('#score-value').text(data.score);
+
+            // The pre-clamp total is only worth showing when it differs: a lead
+            // sitting well above 100 should not look identical to one exactly at
+            // it, and one below 0 should not look merely cold.
+            $('#score-raw').text(data.raw === data.score ? '/ 100' : '/ 100 · ' + data.raw + ' before clamping');
+
+            $('#score-bar')
+                .attr('class', 'progress-bar bg-' + tone)
+                .css('width', Math.max(0, Math.min(100, data.score)) + '%');
+
+            $('#score-temperature')
+                .attr('class', 'badge text-bg-' + tone)
+                .text(temperatureLabel[data.temperature] || data.temperature);
+
+            // Biggest contribution first: the question this panel answers is
+            // "why is this lead hot", and the answer is at the top.
+            const lines = (data.signals || []).slice().sort(function (a, b) { return b.points - a.points; });
+
+            const rows = lines.map(function (line) {
+                return '<div class="d-flex justify-content-between align-items-center small border-top py-1">'
+                    + '<span>' + CRM.escape(line.label)
+                    + (line.count > 1 ? ' <span class="text-muted">×' + line.count + '</span>' : '')
+                    // A cap is why the column does not add up. Saying so is
+                    // cheaper than letting somebody re-derive it (BR-SCORE-01).
+                    + (line.capped ? ' <span class="badge text-bg-light text-muted fw-normal">capped</span>' : '')
+                    + '</span>'
+                    + '<span class="' + (line.points < 0 ? 'text-danger' : 'text-success') + '">'
+                    + (line.points > 0 ? '+' : '') + line.points + '</span>'
+                    + '</div>';
+            }).join('');
+
+            // Decay is drawn apart from the signals because it IS apart: it is
+            // the absence of events, computed rather than recorded, and showing
+            // it as a signal would invent a row that does not exist.
+            const decay = data.decay
+                ? '<div class="d-flex justify-content-between small border-top py-1">'
+                  + '<span class="fst-italic text-muted">Decay for silence</span>'
+                  + '<span class="text-danger">' + data.decay + '</span></div>'
+                : '';
+
+            $('#score-lines').html((rows + decay)
+                || '<p class="text-muted small mb-0">No interest signals recorded yet.</p>');
+
+            // `last_engagement_at` tracks INBOUND signals only, so "never" here
+            // does not mean nobody has worked the lead.
+            $('#score-engagement').text(data.last_engagement_at
+                ? 'Last engagement ' + data.last_engagement_at.substring(0, 16).replace('T', ' ')
+                : 'No inbound engagement recorded.');
+        }).fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    }
+
+    // ------------------------------------------------------- interest signals
+    if ($('#signal-save').length) {
+        const signalModal = new bootstrap.Modal(document.getElementById('signal-modal'));
+        const signalFields = {
+            type: '#signal-type',
+            product_id: '#signal-product',
+            channel: '#signal-channel',
+            excerpt: '#signal-excerpt',
+        };
+
+        $('#signal-save').on('click', function () {
+            const $button = $(this).prop('disabled', true);
+            $('#signal-modal .is-invalid').removeClass('is-invalid');
+
+            // Blank optionals are omitted rather than sent empty - the API
+            // validates them as enums when present, and '' is not one.
+            const payload = { type: $('#signal-type').val() };
+            const productId = $('#signal-product').val();
+            if (productId) payload.product_id = productId;
+            const channel = $('#signal-channel').val();
+            if (channel) payload.channel = channel;
+            const excerpt = $.trim($('#signal-excerpt').val());
+            if (excerpt) payload.excerpt = excerpt;
+
+            $.ajax({ url: base + '/interest', method: 'POST', data: payload })
+                .done(function (response) {
+                    signalModal.hide();
+                    $('#signal-excerpt').val('');
+
+                    // `acted_on: false` means it was kept as evidence but moved
+                    // nothing (BR-INT-04). Saying so avoids "I recorded it and
+                    // the page did not change".
+                    CRM.alert(response.data.signal.acted_on
+                        ? response.message
+                        : 'Signal recorded as evidence, but it did not move the lead.', 'success');
+
+                    loadScore();        // The point of the control: show the effect.
+                    loadTransitions();  // Interest can promote status (FR-INT-02).
+                    loadProducts();
+                    loadTimeline();
+                })
+                .fail(function (xhr) {
+                    const errors = (xhr.responseJSON || {}).errors || [];
+                    const fieldError = errors.find(e => signalFields[e.field]);
+
+                    if (fieldError) {
+                        const $field = $(signalFields[fieldError.field]);
+                        $field.addClass('is-invalid');
+                        $field.siblings('.invalid-feedback').text(fieldError.message);
+                    } else {
+                        signalModal.hide();
+                        CRM.alert(CRM.errorFrom(xhr));
+                    }
+                })
+                .always(function () { $button.prop('disabled', false); });
+        });
+    }
+
+    // ------------------------------------------------------ archive / restore
+    if ($('#archive-confirm').length) {
+        const archiveModal = new bootstrap.Modal(document.getElementById('archive-modal'));
+
+        $('#archive-confirm').on('click', function () {
+            const $button = $(this).prop('disabled', true);
+            $('#archive-reason').removeClass('is-invalid');
+
+            const reason = $.trim($('#archive-reason').val());
+
+            $.ajax({ url: base, method: 'DELETE', data: reason ? { reason: reason } : {} })
+                .done(function () {
+                    // Reloaded rather than sent back to the list: this page is
+                    // where the lead is restored from, so landing on it with
+                    // Restore offered IS the undo path.
+                    window.location.reload();
+                })
+                .fail(function (xhr) {
+                    const errors = (xhr.responseJSON || {}).errors || [];
+                    const fieldError = errors.find(e => e.field === 'reason');
+
+                    if (fieldError) {
+                        $('#archive-reason').addClass('is-invalid');
+                        $('#archive-modal .invalid-feedback').text(fieldError.message);
+                    } else {
+                        archiveModal.hide();
+                        CRM.alert(CRM.errorFrom(xhr));
+                    }
+                })
+                .always(function () { $button.prop('disabled', false); });
+        });
+    }
+
+    $('#lead-restore').on('click', function () {
+        const $button = $(this).prop('disabled', true);
+
+        // Restore is addressed by id, not by the bound model: the lead is
+        // trashed, so implicit binding would never find it.
+        $.ajax({ url: '/api/v1/leads/' + leadId + '/restore', method: 'POST' })
+            .done(function () { window.location.reload(); })
+            .fail(function (xhr) {
+                CRM.alert(CRM.errorFrom(xhr));
+                $button.prop('disabled', false);
+            });
+    });
 
     // ---------------------------------------------------------------- status
     function loadTransitions() {
@@ -1107,7 +1575,7 @@ $(function () {
             const items = response.data.items;
 
             if (!items.length) {
-                $('#call-rows').html('<tr><td colspan="5" class="text-muted small">No calls yet.</td></tr>');
+                $('#call-rows').html('<tr><td colspan="' + callColumns + '" class="text-muted small">No calls yet.</td></tr>');
                 return;
             }
 
@@ -1123,8 +1591,97 @@ $(function () {
                     + '<td class="small">' + (call.duration_seconds ? call.duration_seconds + 's' : '—') + '</td>'
                     + '<td class="small">' + CRM.escape(call.user ? call.user.name : '—') + '</td>'
                     + '<td class="small text-muted">' + CRM.escape(call.notes || '') + '</td>'
+                    + (canListen ? '<td class="small">' + recordingCell(call) + '</td>' : '')
                     + '</tr>';
             }).join(''));
+        });
+    }
+
+    // ------------------------------------------------------------ recordings
+    /*
+     * FR-REC-04, BR-REC-01.
+     *
+     * Drawn from `has_recording` on the call itself, and the recording's own
+     * endpoint is not touched until somebody clicks. Reading a recording is
+     * AUDITED (SEC-FILE-04), so probing it once per row would fill the audit log
+     * with accesses nobody made - the audit entry has to mean "a person listened
+     * to this", or it means nothing.
+     */
+    function recordingCell(call) {
+        if (!call.has_recording) return '<span class="text-muted">—</span>';
+
+        return '<button class="btn btn-sm btn-outline-secondary rec-open" data-id="' + call.id + '">'
+            + '<i class="bi bi-play-circle me-1"></i>Play</button>'
+            + '<div class="rec-panel mt-1" data-call="' + call.id + '"></div>';
+    }
+
+    $('#call-rows').on('click', '.rec-open', function () {
+        const callId = $(this).data('id');
+        const $panel = $('.rec-panel[data-call="' + callId + '"]');
+        const $button = $(this).prop('disabled', true);
+
+        $.getJSON('/api/v1/calls/' + callId + '/recording')
+            .done(function (response) {
+                const recording = response.data;
+
+                if (!recording.is_playable) {
+                    /* The three "no audio" histories are different facts and the
+                       API reports them separately, so the panel says which one
+                       this is. Collapsing them into "no recording" would hide
+                       two of them (BR-REC-02/03). */
+                    $panel.html('<div class="alert alert-secondary py-2 px-3 small mb-0">'
+                        + (recording.is_purged ? 'The audio has been deleted.'
+                            : recording.is_unavailable ? 'The handset could not record this call.'
+                                : 'The recording has not finished uploading.')
+                        + (recording.failure_reason ? ' ' + CRM.escape(recording.failure_reason) : '')
+                        + '</div>');
+                    return;
+                }
+
+                // The URL is signed and short-lived, so it is fetched at play
+                // time and never baked into the row (SEC-FILE-03).
+                $panel.html('<audio controls preload="none" class="w-100" src="' + CRM.escape(recording.audio_url) + '"></audio>'
+                    + '<div class="text-muted" style="font-size:.75rem">'
+                    + (recording.duration_seconds ? recording.duration_seconds + 's · ' : '')
+                    + 'this playback link expires shortly'
+                    + (recording.expires_at ? ' · audio kept until ' + CRM.escape(recording.expires_at.substring(0, 10)) : '')
+                    + '</div>'
+                    + (canDeleteRecording
+                        ? '<button class="btn btn-sm btn-outline-danger mt-1 rec-delete" data-id="' + callId + '">'
+                          + 'Delete recording</button>'
+                        : ''));
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); })
+            .always(function () { $button.prop('disabled', false); });
+    });
+
+    if ($('#rec-delete-confirm').length) {
+        const recDeleteModal = new bootstrap.Modal(document.getElementById('rec-delete-modal'));
+        let recDeleteCallId = null;
+
+        $('#call-rows').on('click', '.rec-delete', function () {
+            recDeleteCallId = $(this).data('id');
+            $('#rec-delete-call').text('The recording of call #' + recDeleteCallId + '.');
+            recDeleteModal.show();
+        });
+
+        $('#rec-delete-confirm').on('click', function () {
+            const $button = $(this).prop('disabled', true);
+
+            $.ajax({ url: '/api/v1/calls/' + recDeleteCallId + '/recording', method: 'DELETE' })
+                .done(function (response) {
+                    recDeleteModal.hide();
+                    CRM.alert(response.message || 'Recording deleted.', 'success');
+                    // The row survives with no audio, so the list is re-read
+                    // rather than the player simply removed - "there was a
+                    // recording and it is gone" is what the call now says.
+                    loadCalls();
+                })
+                .fail(function (xhr) {
+                    recDeleteModal.hide();
+                    CRM.alert(CRM.errorFrom(xhr));
+                })
+                .always(function () { $button.prop('disabled', false); });
         });
     }
 
@@ -1154,6 +1711,9 @@ $(function () {
                 $('#callback-wrap').addClass('d-none');
                 loadCalls();
                 loadTimeline();
+                // A connected call and a no-answer are both scoring signals
+                // (BR-INT-01), so the breakdown has just changed.
+                loadScore();
                 // A wrong or invalid number suppresses the lead, which changes
                 // whether it can be called again (BR-DNC-07).
                 loadCallability();
@@ -1161,13 +1721,69 @@ $(function () {
             .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
     });
 
-    loadTransitions();
-    loadCallability();
-    loadCalls();
-    loadProducts();
-    loadNotes();
-    loadTimeline();
-    loadHistory();
+    // ------------------------------------------------------------- AI calling
+    // FR-AI-01. No separate gate: the button sits inside #call-form, which
+    // loadCallability() shows or hides, so DNC and calling hours refuse an AI
+    // dial with exactly the verdict that refuses a manual one (BR-CALL-04).
+    let aiUnavailable = false;
+
+    $('#ai-call').on('click', function () {
+        const $button = $(this).prop('disabled', true);
+
+        const payload = {};
+        const script = $.trim($('#ai-script').val());
+        if (script) payload.script = script;
+
+        $.ajax({ url: base + '/ai-call', method: 'POST', data: payload })
+            .done(function (response) {
+                $('#ai-call-blocked').addClass('d-none');
+                $('#ai-script').val('');
+                // 202, not 201: Vaaad is dialling and the outcome arrives by
+                // webhook, so the row shows as In progress and fills in later.
+                CRM.alert(response.message, 'success');
+                loadCalls();
+                loadTimeline();
+            })
+            .fail(function (xhr) {
+                const body = xhr.responseJSON || {};
+                const code = ((body.errors || [])[0] || {}).code;
+
+                // 503 names the missing credential. That is true of the whole
+                // installation until somebody changes Settings, so it belongs in
+                // the panel, not in a toast that hides itself after four seconds.
+                if (xhr.status === 503) {
+                    aiUnavailable = true;
+                    $('#ai-call-blocked').removeClass('d-none').text(body.message || CRM.errorFrom(xhr));
+                    return;
+                }
+
+                // The verdict moved under us - the lead was suppressed, or the
+                // calling window closed, between the page load and the click.
+                // Re-reading it puts the reason in the panel the manual form
+                // already uses rather than inventing a second one.
+                if (code === 'dnc.suppressed' || code === 'call.outside_calling_hours' || code === 'lead.archived') {
+                    loadCallability();
+                    return;
+                }
+
+                CRM.alert(CRM.errorFrom(xhr));
+            })
+            .always(function () { $button.prop('disabled', aiUnavailable); });
+    });
+
+    // Nothing is loaded for an archived lead: every /leads/{lead}/* endpoint
+    // resolves it by implicit binding and would answer 404, so the page shows
+    // the identity card and the Restore control and asks for nothing else.
+    if (!isArchived) {
+        loadScore();
+        loadTransitions();
+        loadCallability();
+        loadCalls();
+        loadProducts();
+        loadNotes();
+        loadTimeline();
+        loadHistory();
+    }
 
     // Loaded on first open rather than on page load: three extra requests on
     // every lead view, for tabs most people never touch, is a slow page for

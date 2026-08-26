@@ -33,7 +33,12 @@ class FollowUpController extends Controller
     {
         $options = new QueryOptions(
             $request,
-            allowedFilters: ['status', 'channel', 'lead_id', 'product_id'],
+            // `scheduled_at` is filterable because the working list is a
+            // question about time - "who am I due to contact today" - and
+            // answering it in the browser instead would page over rows the
+            // caller never asked for and report a total that is not the one
+            // shown (FR-FUP-04).
+            allowedFilters: ['status', 'channel', 'lead_id', 'product_id', 'scheduled_at'],
             allowedSorts: ['scheduled_at', 'created_at'],
             allowedIncludes: ['lead', 'product', 'assignee'],
         );

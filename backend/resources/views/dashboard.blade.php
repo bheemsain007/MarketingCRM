@@ -81,6 +81,58 @@
         @endforeach
     </div>
 
+    {{--
+        The money picture (FR-RPT-02, GLOSSARY section 2.5).
+
+        Present only for `reports.business` holders - the controller passes null
+        to everyone else. Unlike every other number on this page these figures
+        are organisation-wide rather than scoped to the viewer, which is exactly
+        why they are gated: a telecaller must not read company revenue off their
+        landing page (SEC-AUTHZ-03, FR-RPT-03).
+    --}}
+    @isset($revenue)
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="h6 mb-0">Revenue this month</h2>
+            <span class="small text-muted">
+                {{ $revenue['period']['from'] }} to {{ $revenue['period']['to'] }}
+                ({{ $revenue['period']['timezone'] }})
+                &middot; <a href="{{ route('web.reports') }}">Full report</a>
+            </span>
+        </div>
+
+        <div class="row g-3" id="revenue-tiles">
+            @foreach ([
+                ['label' => 'Collected', 'value' => $revenue['figures']['collected'], 'tone' => 'success',
+                 'note' => 'Payments received this month'],
+                ['label' => 'Booked',    'value' => $revenue['figures']['booked'],    'tone' => 'primary',
+                 'note' => 'Deals signed this month'],
+                ['label' => 'Outstanding', 'value' => $revenue['figures']['outstanding'], 'tone' => 'warning',
+                 'note' => 'Owed right now'],
+                ['label' => 'Overdue',   'value' => $revenue['figures']['overdue'],   'tone' => 'danger',
+                 'note' => 'Past due right now'],
+            ] as $tile)
+                <div class="col-6 col-lg-3">
+                    <div class="card stat-card h-100">
+                        <div class="card-body py-3">
+                            <div class="text-muted small">{{ $tile['label'] }}</div>
+                            <div class="h3 text-{{ $tile['tone'] }}">₹{{ number_format((float) $tile['value']) }}</div>
+                            <div class="text-muted small">{{ $tile['note'] }}</div>
+                        </div>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+
+        {{-- Said out loud, because summing booked and collected is the classic
+             mistake and the tiles put them side by side. The two right-hand
+             tiles are snapshots, not period figures - a debt does not belong to
+             a month. --}}
+        <p class="text-muted small mt-2 mb-4">
+            Booked and collected are separate figures and are never added together.
+            Outstanding and overdue are what is owed right now, not this month's totals.
+        </p>
+    @endisset
+
     <div class="row g-3">
         <div class="col-md-4">
             <div class="card h-100">
@@ -154,7 +206,8 @@
     </div>
 
     <p class="text-muted small mt-4 mb-0">
-        Direct counts only. Conversion rates, talk time and attribution arrive with reporting in Phase 26/27,
-        where every metric has exactly one agreed formula.
+        Lead figures are direct counts, scoped to you. The revenue row comes from the same reporting service
+        the reports screen reads, so the two cannot disagree about a figure. Conversion rates, talk time and
+        attribution live on the reports screen, where every metric has exactly one agreed formula.
     </p>
 @endsection

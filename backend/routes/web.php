@@ -164,4 +164,39 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/imports', [PageController::class, 'imports'])
         ->middleware('permission:leads.import')->name('web.imports');
+
+    /*
+     * Your own notifications, so no permission gate - for the same reason
+     * /account has none (FR-NOTIF-03).
+     */
+    Route::get('/notifications', [PageController::class, 'notifications'])
+        ->name('web.notifications');
+
+    // `templates.view` opens the page; authoring controls are drawn only for
+    // templates.manage (FR-COMM-02).
+    Route::get('/templates', [PageController::class, 'templates'])
+        ->middleware('permission:templates.view')->name('web.templates');
+
+    // The "what do I owe someone today" screen, distinct from the per-lead
+    // tab on the lead page (FR-FUP-04).
+    Route::get('/follow-ups', [PageController::class, 'followUps'])
+        ->middleware('permission:follow_ups.view')->name('web.follow-ups');
+
+    // Static segment, and /dnc takes no parameter, so no binding ambiguity.
+    Route::get('/dnc/skips', [PageController::class, 'dncSkips'])
+        ->middleware('permission:dnc.view')->name('web.dnc.skips');
+
+    Route::get('/calls', [PageController::class, 'calls'])
+        ->middleware('permission:calls.view')->name('web.calls');
+
+    // Gated on leads.view rather than messages.send, matching the API behind
+    // it: reading what was sent is a lead read, not a send.
+    Route::get('/messages', [PageController::class, 'messages'])
+        ->middleware('permission:leads.view')->name('web.messages');
+
+    // Tags are organisation reference data, like the settings they sit
+    // beside - anyone with leads.update may apply one, but shaping the
+    // vocabulary is configuration.
+    Route::get('/tags', [PageController::class, 'tags'])
+        ->middleware('permission:settings.manage')->name('web.tags');
 });
