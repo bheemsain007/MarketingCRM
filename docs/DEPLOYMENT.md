@@ -111,10 +111,12 @@ Application code never references a driver directly, so moving to a VPS is a `.e
 
 ```
 * * * * * cd ~/domains/<site>/backend && php artisan schedule:run >> /dev/null 2>&1
-* * * * * cd ~/domains/<site>/backend && php artisan queue:work --stop-when-empty --max-time=50 --tries=3 >> /dev/null 2>&1
+* * * * * cd ~/domains/<site>/backend && php artisan queue:work --queue=messages,webhooks,imports,reports,default --stop-when-empty --max-time=50 --tries=3 >> /dev/null 2>&1
 ```
 
 The second line replaces the daemon worker: it starts each minute, drains what it can, and exits before the next tick. `--max-time=50` keeps it inside the minute so overlapping runs don't pile up.
+
+**`--queue` is not optional.** Without it a worker drains only `default`, and every job in this application names a queue instead (`config('crm.queues')`). Omitting the flag sends no error anywhere: the API keeps answering `202 queued`, `failed_jobs` stays empty, and the rows just accumulate — while password-reset mail, the one thing that *does* use `default`, keeps working, so a smoke test passes. `php artisan crm:production-check` reports the backlog per queue and fails once work sits unclaimed.
 
 ### Honest limitations of this target
 
@@ -138,12 +140,13 @@ Per [ARCHITECTURE §4](ARCHITECTURE.md#4-queue--worker-topology). Supervisor run
 
 | Worker group | Queues | Processes *(starting point)* |
 |--------------|--------|------------------------------|
-| `critical` | `critical,webhooks` | 2 |
-| `dialer` | `dialer` | 2 |
-| `campaigns` | `campaigns` | 4–10, scale with volume |
-| `background` | `media,imports,reports,default` | 2 |
+| `realtime` | `webhooks` | 2 |
+| `messages` | `messages` | 4–10, scale with volume |
+| `background` | `imports,reports,default` | 2 |
 
-**Never run one worker on all queues.** Latency-sensitive work (`dialer`, `webhooks`) must not queue behind bulk sends.
+These are the queues the code actually dispatches onto — the canonical list is `config('crm.queues')`, and anything added there needs a worker here. The wider topology in [ARCHITECTURE §4](ARCHITECTURE.md#4-queue--worker-topology) (`critical`, `dialer`, `campaigns`, `media`) is the design target; those queues have no dispatcher yet, so staffing them today would start workers that idle for ever.
+
+**Never run one worker on all queues.** Latency-sensitive work (`webhooks`) must not queue behind bulk sends — a campaign fan-out puts one job per recipient on `messages`.
 
 Worker settings: `--tries=3 --backoff=30,120,600 --max-time=3600 --timeout=<below job timeout>`. Workers are restarted on every deploy (§6) — long-running PHP processes hold old code in memory.
 

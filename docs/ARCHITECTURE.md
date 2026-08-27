@@ -120,6 +120,8 @@ backend/
 
 Bulk and slow work never runs in an HTTP request (NFR-06). Redis is the queue driver.
 
+> **Design target vs. what is built.** The table below is the intended topology. Today the code dispatches onto five of these only — `messages` (which carries the campaign fan-out this table assigns to `campaigns`), `webhooks`, `imports`, `reports` and `default`; the canonical list is `config('crm.queues')`. `critical`, `dialer`, `campaigns` and `media` have no dispatcher yet. Staff workers from [DEPLOYMENT §4](DEPLOYMENT.md#4-queue-workers), not from this table, or you will start workers that idle for ever while real work waits on a queue nobody drains.
+
 | Queue | Purpose | Priority | Worker guidance |
 |-------|---------|----------|-----------------|
 | `critical` | Auth/security side-effects, DNC propagation, webhook ingestion follow-up | Highest | Always staffed, short jobs only |

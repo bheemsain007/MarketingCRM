@@ -11,7 +11,7 @@ php artisan test                                  # 643 tests
 ./vendor/bin/phpstan analyse --memory-limit=1G    # static analysis
 
 php artisan schedule:work                         # reminders, overdue payments, decay, retention
-php artisan queue:work --queue=messages,webhooks,imports,default
+php artisan queue:work --queue=messages,webhooks,imports,reports,default
 ```
 
 ## Layout

@@ -363,4 +363,27 @@ return [
     */
     'default_tenant_id' => 0,
 
+    /*
+    |--------------------------------------------------------------------------
+    | Queues in use (ARCHITECTURE §4, DEPLOYMENT §4)
+    |--------------------------------------------------------------------------
+    | The queues jobs are actually dispatched onto. This list exists because a
+    | worker started without `--queue` drains only `default`, and every job in
+    | this application names a queue - so the omission sends no error anywhere,
+    | it just means nothing ever runs while the API keeps answering "queued".
+    |
+    | Anything added here must also be named in the worker command in
+    | DEPLOYMENT §4 and in backend/README.md. `crm:production-check` reports the
+    | backlog per queue so an unstaffed one is visible before anyone notices a
+    | campaign that never sent.
+    */
+    'queues' => ['messages', 'webhooks', 'imports', 'reports', 'default'],
+
+    /*
+    | How long work may sit unclaimed before the check calls the queue
+    | unstaffed. Generous, because a legitimately deep campaign backlog drains
+    | slowly - this is meant to catch "no worker at all", not "busy".
+    */
+    'queue_backlog_alert_minutes' => (int) env('QUEUE_BACKLOG_ALERT_MINUTES', 30),
+
 ];

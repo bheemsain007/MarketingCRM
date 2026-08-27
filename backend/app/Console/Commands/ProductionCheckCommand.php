@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\DB;
@@ -187,6 +188,66 @@ class ProductionCheckCommand extends Command
             } catch (Throwable $e) {
                 $this->bad('Failed jobs table', 'Not readable: '.$e->getMessage().'. Run `php artisan queue:failed-table` and migrate.');
             }
+
+            $this->checkQueueBacklog();
+        }
+    }
+
+    /**
+     * Report work that is queued but never picked up (ARCHITECTURE §4).
+     *
+     * A worker started without `--queue` drains only `default`, and every job
+     * here names a queue instead. Nothing throws in that state: the API keeps
+     * returning "queued", `failed_jobs` stays empty, and the rows simply
+     * accumulate - so the only visible symptom is old work that never moved.
+     * That is exactly what this measures, which also makes it indifferent to
+     * the cause: a stopped worker and a mistyped queue name look the same, and
+     * both need the same person to look.
+     */
+    private function checkQueueBacklog(): void
+    {
+        $stale = now()->subMinutes(max(1, (int) config('crm.queue_backlog_alert_minutes')));
+
+        try {
+            /** @var array<string, object{waiting: int, oldest: string|null}> $depths */
+            $depths = DB::table('jobs')
+                ->selectRaw('queue, COUNT(*) as waiting, MIN(created_at) as oldest')
+                ->groupBy('queue')
+                ->get()
+                ->keyBy('queue')
+                ->all();
+        } catch (Throwable $e) {
+            $this->bad('Jobs table', 'Not readable: '.$e->getMessage().'. Run `php artisan queue:table` and migrate.');
+
+            return;
+        }
+
+        foreach ($depths as $queue => $row) {
+            $waiting = (int) $row->waiting;
+
+            // `created_at` on the jobs table is a unix timestamp, not a date.
+            $oldest = $row->oldest !== null ? Carbon::createFromTimestamp((int) $row->oldest) : null;
+
+            if ($oldest !== null && $oldest->lessThan($stale)) {
+                $this->bad(
+                    'Queue "'.$queue.'"',
+                    $waiting.' job(s) waiting, oldest queued '.$oldest->diffForHumans().
+                    ' - no worker is draining this queue. Check the worker names it (DEPLOYMENT §4).'
+                );
+
+                continue;
+            }
+
+            $this->ok('Queue "'.$queue.'"', $waiting.' waiting');
+        }
+
+        // A queue nobody has dispatched to yet has no row at all, which is not
+        // a fault - but naming it keeps the expected set visible next to the
+        // measured one, so a queue that disappears from the code is noticed.
+        $idle = array_diff((array) config('crm.queues', []), array_keys($depths));
+
+        if ($idle !== []) {
+            $this->ok('Queues empty', implode(', ', $idle));
         }
     }
 
