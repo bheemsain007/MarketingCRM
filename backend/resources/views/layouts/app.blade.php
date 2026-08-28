@@ -99,7 +99,10 @@
     </a>
     @endpermission
 
-    @permission('leads.archive')
+    {{-- Matches the route, which opens the queue to leads.view and leaves
+         merging to leads.archive (T-64). Gated on archive here, the read-only
+         mode the page has for reviewers was unreachable by any of them. --}}
+    @permission('leads.view')
     <a href="{{ route('web.leads.duplicates') }}" class="{{ request()->routeIs('web.leads.duplicates') ? 'active' : '' }}">
         <i class="bi bi-people me-2"></i>Duplicates
     </a>
@@ -168,6 +171,14 @@
     @permission('settings.manage')
     <a href="{{ route('web.tags') }}" class="{{ request()->routeIs('web.tags') ? 'active' : '' }}">
         <i class="bi bi-tags me-2"></i>Tags
+    </a>
+    @endpermission
+
+    {{-- Admin and Super Admin only (SEC-AUD-02). Last, because it is the
+         screen you open when something has already gone wrong. --}}
+    @permission('audit.view')
+    <a href="{{ route('web.audit') }}" class="{{ request()->routeIs('web.audit') ? 'active' : '' }}">
+        <i class="bi bi-journal-text me-2"></i>Audit Trail
     </a>
     @endpermission
 </nav>

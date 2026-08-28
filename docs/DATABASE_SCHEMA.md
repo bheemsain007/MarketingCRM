@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 2.0 |
-| **Last updated** | 2026-08-10 (Phase 2) |
-| **Status** | **Implemented.** 28 migrations applied against MySQL 8.4; rollback verified. Sales/payment tables remain deferred to Phases 22–23. |
+| **Version** | 2.1 |
+| **Last updated** | 2026-08-28 (reconciled against `database/migrations`; the previous pass stopped at Phase 2 and had not been touched since, despite 17 more migrations landing through Phase 29) |
+| **Status** | **Implemented.** **45 migrations**, **56 tables** (49 domain tables + 7 framework tables: `cache`, `cache_locks`, `jobs`, `job_batches`, `failed_jobs`, `sessions`, `password_reset_tokens`). Verify with `php artisan migrate:status` or a `SHOW TABLES` against `marketing_crm_test_b`. §3's "planned" module list below predates most of these phases and named several tables that were never built this way — see the note at the top of §3. |
 | **Related** | [BUSINESS_RULES.md](BUSINESS_RULES.md) · [ARCHITECTURE.md](ARCHITECTURE.md) · [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) |
 
 ---
@@ -111,7 +111,7 @@ Applied to every table from Phase 2 onward:
 
 ### 2.6 `call_recordings`
 
-`id` · `call_id` FK unique · `lead_id` FK · `user_id` FK · `storage_disk` · `storage_path` (private disk, never public) · `file_size_bytes` · `duration_seconds` · `checksum` varchar null (upload integrity/dedupe, FR-REC-02) · `upload_status` (pending/uploading/uploaded/failed) · `uploaded_at` · `expires_at` (retention, BR-REC-02) · `device_captured_at` · timestamps.
+`id` · `call_id` FK unique · `lead_id` FK · `user_id` FK · `storage_disk` · `storage_path` (private disk, never public) · `file_size_bytes` · `duration_seconds` · `checksum` varchar null (upload integrity/dedupe, FR-REC-02) · `upload_status` (**pending/uploading/uploaded/failed/unavailable/purged** — corrected 2026-08-28, this list omitted `unavailable` and `purged`, both of which `CallRecordingService` writes and which `CallRecording::isUnavailable()`/`isPurged()` and `CallRecordingResource` (`is_unavailable`, `is_purged`) branch on; `unavailable` is BR-REC-03's "OS blocked capture", `purged` is BR-REC-02's "deleted on retention, row kept") · `uploaded_at` · `expires_at` (retention, BR-REC-02) · `device_captured_at` · timestamps.
 
 **Indexes:** `(upload_status)` · `(expires_at)` for the purge job · unique `(call_id)`.
 
@@ -251,25 +251,91 @@ The five counters are a **denormalised summary** of `lead_import_rows`, which re
 
 **Indexes:** `(lead_import_id, status)` · unique `(lead_import_id, row_number)`.
 
+### 2.17 `settings` — runtime config override (SEC-CFG-01/04)
+
+`id` · `tenant_id` default 0 · `key` varchar(191) — dotted, identical to the `config()` key it overrides
+· `value` text null, **always encrypted**, secret or not (encrypting an integer costs nothing; one
+forgotten `is_secret` flag on a conditional scheme would write an API key in clear text) · `is_secret`
+boolean (drives redaction only, not encryption) · `updated_by` FK users null · timestamps.
+
+An **override layer, not a replacement** for `.env` → `config/*`: `SettingsService::get()` reads this
+table first and falls back to `config()`, so an empty table changes nothing (SEC-CFG-01) while making
+rotation possible without shell access (SEC-CFG-04) — the Hostinger target's lower tiers have no SSH
+(T-12). Nothing is ever queried by `value`.
+
+**Indexes:** unique `(tenant_id, key)`.
+
+### 2.18 `lead_duplicate_candidates` — the duplicate review queue (BR-DUP-03, T-64)
+
+`id` · `tenant_id` default 0 · `lead_id` FK cascade · `duplicate_lead_id` FK cascade — ordered by the
+service so `(a, b)` and `(b, a)` cannot both exist · `match_type` varchar(20) default `email` (only
+signal built; the column exists so a future one does not need a second table) · `match_value`
+varchar(190) null · `status` varchar(20) default `pending` · `resolution_note` text null · `resolved_by`
+FK users null · `resolved_at` null · timestamps.
+
+Exists because BR-DUP-03 says a same-email/different-phone match is *flagged for review*, not
+auto-merged — phone is identity (BR-DUP-01), email is not, and two people at one company legitimately
+share an `info@` address. Dismissals are kept, not deleted, so the same pair is not re-raised on every
+detector run.
+
+**Indexes:** unique `(lead_id, duplicate_lead_id)` · `(tenant_id, status)`.
+
+### 2.19 `lead_exports` — bulk export runs (FR-LEAD-12, SEC-PII-04)
+
+`id` · `tenant_id` default 0 · `user_id` FK users null, `nullOnDelete` (an audit record must survive
+the requester's account being removed) · `status` (pending/processing/completed/failed) · `filters`
+json null — the same filter/search params the lead list screen sent, so the job re-derives exactly the
+audience the operator was looking at · `disk` varchar null · `file_path` varchar null (null until the
+job finishes; nulled again once purged) · `row_count` int null · `failure_reason` text null ·
+`requested_at` · `completed_at` null · `expires_at` null (download window, SEC-PII-04/05) · timestamps.
+
+The export mirror of `lead_imports` (§2.15): a queued job the client polls, and the row is the audit
+trail of who exported what and when, kept after the file itself is purged by `leads:purge-export-files`.
+
+**Indexes:** `(tenant_id, user_id, created_at)` · `status`.
+
+### 2.20 `payment_status_history` — append-only (mirrors `lead_status_history`, §2.3)
+
+`id` · `payment_id` FK cascade · `from_status` varchar(20) null · `to_status` varchar(20) ·
+`amount_at_change` decimal(12,2) null · `changed_by` FK users null · `source` varchar(20) default
+`manual` (manual/gateway/system) · `reason` varchar(255) null · `created_at` only — no `updated_at`,
+matching the table's append-only intent.
+
+Every BR-PAY-02 transition writes a row here, the same "append rather than overwrite" shape as lead
+status: a payment's balance and history are both evidence that can be disputed, so what changed it and
+when has to survive the change itself.
+
+**Indexes:** `(payment_id, created_at)`.
+
 ---
 
-## 3. Remaining Modules (structure agreed, columns in Phase 2)
+## 3. Remaining Modules — corrected against `database/migrations`, 2026-08-28
+
+> This table was written at Phase 2, before Phases 18–29 existed, and named several tables as a
+> **plan** that later phases did not build exactly this way. It was never revisited. The row below is
+> corrected: struck-through names were never created (search `database/migrations` — they are absent),
+> with what was actually built instead, in each case a **deliberate design decision recorded
+> elsewhere**, not an oversight. Everything not struck through exists.
 
 | Module | Tables |
 |--------|--------|
 | Core/Auth | `users`, `roles`, `permissions`, `role_user`, `permission_role`, `personal_access_tokens`, `teams` (Manager scoping) |
 | Products | `products` |
-| Leads (support) | `lead_sources`, `tags`, `lead_tag`, `lead_notes`, `lead_activities` — `lead_imports` and `lead_import_rows` are now specified in §2.15–2.16 |
+| Leads (support) | `lead_sources`, `tags`, `lead_tag`, `lead_notes`, `lead_activities` — `lead_imports`/`lead_import_rows` in §2.15–2.16, `lead_duplicate_candidates`/`lead_exports` in §2.18–2.19 |
 | Calling | `auto_dialer_sessions`, `auto_dialer_queue_items` |
-| Communication | `templates`, `message_events` (per-status webhook events) |
-| Interest Engine | `interest_signals`, `lead_scores` (score change audit) |
+| Communication | `templates`. ~~`message_events`~~ — never built; provider payloads live in `provider_webhook_logs` (§2.9) instead, one table for every channel rather than one per feature |
+| Interest Engine | `interest_signals`. ~~`lead_scores`~~ — never built, and not an oversight: the score is *derived* from `interest_signals` on every read rather than accumulated into a stored/audited value, which is what lets re-weighting `config('crm.scoring')` apply to history (`GET /leads/{id}/score` returns the working) |
 | Follow-ups | `follow_ups` |
-| Sales | `opportunities`, `opportunity_products`, `quotations`, `quotation_items`, `proposals`, `sales`, `lost_sales` |
-| Payments | `customer_leads` (pivot), `payments`, `payment_links`, `invoices` |
-| AI Calling | `ai_calls`, `ai_call_transcripts`, `ai_call_summaries` |
-| Meta Capture | `meta_lead_forms`, `meta_form_field_mappings` |
-| Audit | `audit_logs`, `activity_logs` |
+| Sales | `opportunities`, `opportunity_products`, `quotations`, `quotation_items`, `sales`. ~~`proposals`~~ — never built, folded into `quotations`. ~~`lost_sales`~~ — never built; a lost deal is `opportunities.status = 'lost'` plus `lost_reason`/`lost_notes`/`closed_at` on the same row, a deliberate deviation (T-56) |
+| Payments | `customer_leads` (pivot), `payments`, `payment_links`, `payment_status_history` (§2.20). ~~`invoices`~~ — never built; not requested by any FR/BR |
+| AI Calling | ~~`ai_calls`~~, ~~`ai_call_transcripts`~~, ~~`ai_call_summaries`~~ — none built. An AI call is a row in `calls` (§2.5) with `dial_source='ai'`, exactly like a human one. **No transcript is stored anywhere in this schema** — the Vaaad webhook's `summary` is written into `calls.notes` and kept as the interest signal's `excerpt`. FR-AI-01 lists transcript and AI score as acceptance criteria; neither exists as data. See SECURITY §8 |
+| Meta Capture | ~~`meta_lead_forms`~~, ~~`meta_form_field_mappings`~~ — never built; the webhook enqueues on `leadgen_id` and fetches the lead from the Graph API at process time rather than caching form structure |
+| Audit | `audit_logs`. ~~`activity_logs`~~ — never built under that name; `lead_activities` (lead-scoped) and `user_activity_pings` (§2.11, attendance-scoped) cover what it would have |
 | Reporting | `report_daily_aggregates` (pre-computed, FR-RPT-05) |
+
+**Undocumented until now**: `settings` (§2.17), `lead_duplicate_candidates` (§2.18), `lead_exports`
+(§2.19) and `payment_status_history` (§2.20) all existed as real, migrated tables that this file never
+named anywhere — not here, not in §2. They are documented above.
 
 ---
 
@@ -297,13 +363,12 @@ campaigns ──< campaign_recipients >── leads
 ## 5. Design Notes
 
 - **`is_suppressed` on `leads` is a denormalised cache**, maintained by `DncService` on every suppression change. It exists so list filtering stays fast; **`dnc_entries` remains the authority** and the gate always reads the real table. Both must never be checked independently by feature code.
-- **`messages` is one table across all channels**, not one per channel. Channel-specific provider payloads live in `message_events`/webhook logs. This keeps the lead timeline (FR-LEAD-09) a single query rather than a six-way union.
-- **`idempotency_key` unique constraint** is what makes double-sends structurally impossible under job retry, rather than relying on application checks.
+- **`messages` is one table across all channels**, not one per channel. Channel-specific provider payloads live in `provider_webhook_logs` (§2.9), not a separate `message_events` table — that table was planned at Phase 2 and never built; the webhook log already served the purpose. This keeps the lead timeline (FR-LEAD-09) a single query rather than a six-way union. *(Corrected 2026-08-28 — this bullet asserted `message_events` existed; it does not, see §3.)*
+- **`idempotency_key` unique constraint** is what makes double-sends structurally impossible under job retry, rather than relying on application checks. This is the server's own send-side correlation key; it is not the client-facing `Idempotency-Key` HTTP header, which is not implemented — see API_DOCUMENTATION §8.
 - **Enums as varchar** — the status sets in BUSINESS_RULES.md are expected to be tuned; MySQL `ENUM` changes require table alterations on large tables.
-- **Reporting reads pre-aggregates**, never scanning `calls`/`messages` live at dashboard load.
+- **Reporting reads pre-aggregates for fully-past periods only.** `report_daily_aggregates` (§3, FR-RPT-05) is written nightly by `crm:aggregate-daily-reports`; a period that includes today still falls back to a live scan of `calls`/`messages`/`lead_status_history` — pre-aggregation speeds up history, it does not remove the live path. *(Corrected 2026-08-28 — this bullet previously said "never scanning... live at dashboard load", which overstated it.)*
 
 ## 6. Open Items
 
-- Column-level specs for §3 modules — Phase 2.
-- Whether lead custom fields are needed (JSON column vs. EAV) — not requested; recommend deferring until asked.
-- Partitioning/archival strategy for `messages` and `calls` at high volume — revisit before Phase 29 (production).
+- Whether lead custom fields are needed (JSON column vs. EAV) — not requested; recommend deferring until asked (T-40).
+- Partitioning/archival strategy for `messages` and `calls` at high volume — still open. Phase 29 (production hardening, shipped 2026-08-13) did not add this; it addressed security headers, 2FA and operational checks, not table growth. Revisit alongside the VPS move (T-30, T-41).

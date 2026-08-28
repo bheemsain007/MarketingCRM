@@ -36,7 +36,15 @@ class OpportunityController extends Controller
             $request,
             allowedFilters: ['status', 'owner_id', 'lead_id', 'customer_id', 'lost_reason'],
             allowedSorts: ['created_at', 'value', 'expected_close_on'],
-            allowedIncludes: ['lead', 'owner', 'products', 'sale'],
+            /*
+             * `products.product` and not `products`: OpportunityResource reads
+             * the product NAME off each line, so loading one level left the
+             * resource reaching through an unloaded relation and the whole
+             * request died on preventLazyLoading. An include has to name the
+             * full path the resource walks - same convention as
+             * `leadProducts.product` on the lead list.
+             */
+            allowedIncludes: ['lead', 'owner', 'products.product', 'sale'],
         );
 
         $query = Opportunity::query()

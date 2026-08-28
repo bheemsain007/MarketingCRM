@@ -6,6 +6,7 @@ use App\Enums\Channel;
 use App\Enums\DncReason;
 use App\Enums\ErrorCode;
 use App\Exceptions\ApiException;
+use App\Models\AuditLog;
 use App\Models\DncEntry;
 use App\Models\Lead;
 use Illuminate\Support\Collection;
@@ -76,6 +77,12 @@ class DncService
 
             $this->syncSuppressionFlag($lead);
 
+            $this->audit($entry, 'dnc_added', $actorId, [
+                'reason' => $reason->value,
+                'channel' => $channel?->value,
+                'source' => $source,
+            ]);
+
             return $entry;
         });
     }
@@ -89,7 +96,9 @@ class DncService
      *
      * Authority is the caller's business - `dnc.remove` is Manager+ and is in
      * `Permission::isAudited()`, so the middleware writes the access record
-     * before this ever runs.
+     * before this ever runs. That record names the PERMISSION and the route;
+     * the entry below names which suppression was lifted and why, which is the
+     * only half a compliance question can use (SEC-AUD-02, SEC-AUD-03).
      *
      * @throws ApiException when the entry is already inactive
      */
@@ -115,6 +124,12 @@ class DncService
             if ($entry->lead) {
                 $this->syncSuppressionFlag($entry->lead);
             }
+
+            $this->audit($entry, 'dnc_removed', $actorId, [
+                'reason' => $entry->reason->value,
+                'channel' => $entry->channel?->value,
+                'removal_reason' => $reason,
+            ]);
 
             return $entry->fresh();
         });
@@ -168,5 +183,32 @@ class DncService
         if ($lead->is_suppressed !== $suppressed) {
             $lead->forceFill(['is_suppressed' => $suppressed])->save();
         }
+    }
+
+    /**
+     * The compliance record of a suppression decision (SEC-AUD-02).
+     *
+     * Adding somebody to the do-not-contact list wrote nothing at all until
+     * now: `dnc.create` is held by every telecaller and is not in
+     * `Permission::isAudited()`, and the automatic triggers (BR-DNC-07) do not
+     * pass through a permission gate in the first place. So the record has to
+     * be written where the decision is made, not where a route is entered.
+     *
+     * The phone number and email are deliberately left out. They are already on
+     * the `dnc_entries` row this names, and the audit log is read by a wider
+     * audience than the suppression list (SEC-PII-03).
+     *
+     * @param  array<string, mixed>  $values
+     */
+    private function audit(DncEntry $entry, string $action, ?int $actorId, array $values): void
+    {
+        AuditLog::create([
+            'user_id' => $actorId,
+            'action' => $action,
+            'auditable_type' => DncEntry::class,
+            'auditable_id' => $entry->id,
+            'new_values' => $values + ['lead_id' => $entry->lead_id],
+            'description' => sprintf('Suppression #%d', $entry->id),
+        ]);
     }
 }

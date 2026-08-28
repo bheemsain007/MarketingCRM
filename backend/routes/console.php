@@ -22,9 +22,9 @@ Artisan::command('inspire', function () {
  *
  * Listed FIRST because every other line below depends on it being true. A
  * missing cron entry is silent: nothing errors, work simply never happens, and
- * two retention purges stop running with no signal anywhere (SEC-PII-05). This
+ * three retention purges stop running with no signal anywhere (SEC-PII-05). This
  * writes a timestamp every minute so that absence becomes the alarm -
- * `crm:production-check` and GET /up/scheduler both read it.
+ * `crm:production-check` and GET /api/v1/health/scheduler both read it.
  *
  * NOT `withoutOverlapping`: the whole point is that it runs, and an overlap
  * lock that got stuck would suppress exactly the signal being monitored. The
@@ -35,6 +35,17 @@ Schedule::command('crm:scheduler-heartbeat')->everyMinute();
 // Retention on uploaded lead files (SEC-PII-05). Runs off-peak; deleting a
 // few files is cheap, but it reads a table the import path also writes.
 Schedule::command('leads:purge-import-files')
+    ->dailyAt('03:30')
+    ->withoutOverlapping();
+
+/*
+ * Retention on GENERATED export files (FR-LEAD-12, SEC-PII-04/05). The mirror
+ * of the line above: an export is the same bulk lead PII travelling the other
+ * way, and `expires_at` only stops the download - it deletes nothing. Daily,
+ * because expiry can only change at a day boundary, and alongside its sibling
+ * because both are cheap file deletions in the quiet hours.
+ */
+Schedule::command('leads:purge-export-files')
     ->dailyAt('03:30')
     ->withoutOverlapping();
 

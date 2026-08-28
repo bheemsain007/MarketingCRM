@@ -238,11 +238,24 @@
                 </div>
             </div>
         @else
+        @php
+            /*
+                Calls is the default tab, but both of its loaders need
+                calls.view - a role without it (Accounts) opened this page
+                straight onto a pane that 403s twice and stays blank. Products
+                needs only leads.view, so it is the fallback tab every role
+                that can reach this page can actually read (ROLE-05).
+            */
+            $canViewCalls = auth()->user()->hasPermission('calls.view');
+        @endphp
+
         <div class="card">
             <div class="card-header p-0">
                 <ul class="nav nav-tabs card-header-tabs m-0 px-2 pt-2" role="tablist">
+                    @permission('calls.view')
                     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-calls" type="button">Calls</button></li>
-                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-products" type="button">Products</button></li>
+                    @endpermission
+                    <li class="nav-item"><button class="nav-link {{ $canViewCalls ? '' : 'active' }}" data-bs-toggle="tab" data-bs-target="#tab-products" type="button">Products</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-notes" type="button">Notes</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-timeline" type="button">Timeline</button></li>
                     @permission('follow_ups.view')
@@ -258,6 +271,7 @@
 
             <div class="card-body tab-content">
                 {{-- Calls --------------------------------------------------- --}}
+                @permission('calls.view')
                 <div class="tab-pane fade show active" id="tab-calls">
                     @permission('calls.create')
                     {{--
@@ -337,9 +351,10 @@
                         </table>
                     </div>
                 </div>
+                @endpermission
 
                 {{-- Products ------------------------------------------------ --}}
-                <div class="tab-pane fade" id="tab-products">
+                <div class="tab-pane fade {{ $canViewCalls ? '' : 'show active' }}" id="tab-products">
                     <p class="text-muted small">
                         Each product carries its own interest state. Changing one never affects another,
                         and declining one product does not suppress the lead.
@@ -699,6 +714,9 @@ $(function () {
     const isArchived = @json($isArchived);
     const canListen = @json(auth()->user()->hasPermission('recordings.listen'));
     const canDeleteRecording = @json(auth()->user()->hasPermission('recordings.delete'));
+    // Removing a product interest is a DELETE that needs leads.update, which
+    // Accounts and Viewer deliberately do not hold (ROLE-05).
+    const canUpdateLead = @json(auth()->user()->hasPermission('leads.update'));
 
     // The Recording column only exists for a role that may listen, so the
     // "no calls yet" row has to span a different number of cells for each.
@@ -1009,7 +1027,9 @@ $(function () {
                     + CRM.escape(row.interest_status) + '</span></td>'
                     + '<td class="small">' + (row.quoted_value ? CRM.escape(row.currency + ' ' + row.quoted_value) : '—') + '</td>'
                     + '<td class="text-end">'
-                    + '<button class="btn btn-sm btn-outline-danger remove-product" data-id="' + row.id + '">Remove</button>'
+                    + (canUpdateLead
+                        ? '<button class="btn btn-sm btn-outline-danger remove-product" data-id="' + row.id + '">Remove</button>'
+                        : '')
                     + '</td></tr>';
             }).join(''));
         });
@@ -1054,7 +1074,10 @@ $(function () {
                 return '<div class="border-bottom py-2">'
                     + '<div class="small">' + CRM.escape(note.body) + '</div>'
                     + '<div class="text-muted" style="font-size:.78rem">'
-                    + CRM.escape((note.user ? note.user.name : 'System')) + ' · ' + note.created_at.substring(0, 16).replace('T', ' ')
+                    // The endpoint names the writer `author` ({id, name}, null
+                    // when the user is gone). Reading `user` here made every
+                    // note look like the system wrote it.
+                    + CRM.escape((note.author ? note.author.name : 'System')) + ' · ' + note.created_at.substring(0, 16).replace('T', ' ')
                     + '</div></div>';
             }).join(''));
         });
@@ -1311,11 +1334,15 @@ $(function () {
                    requires a sale before a lead may be marked Converted, and
                    until this button existed there was no way to record one from
                    the browser. */
-                + '<button class="btn btn-sm btn-success me-1 deal-sale" data-id="' + d.id + '">Record sale</button>';
+                + '<button class="btn btn-sm btn-success me-1 deal-sale" data-id="' + d.id + '">Record sale</button>'
+                /* Closing a deal is a write like the three above it:
+                   /opportunities/{id}/lost requires sales.manage. Drawn
+                   outside this block it was offered to every sales.view
+                   holder and could only 403. */
+                + '<button class="btn btn-sm btn-outline-danger deal-lost" data-id="' + d.id + '">Mark lost</button>';
         }
 
-        return html
-            + '<button class="btn btn-sm btn-outline-danger deal-lost" data-id="' + d.id + '">Mark lost</button>';
+        return html;
     }
 
     /* Money against a won deal (FR-PAY-01/03/04). Drawn only for those who may
@@ -1777,8 +1804,12 @@ $(function () {
     if (!isArchived) {
         loadScore();
         loadTransitions();
+        // Both need calls.view, and the tab they fill is only drawn for a role
+        // that holds it - asking anyway would be two 403s per page view.
+        @permission('calls.view')
         loadCallability();
         loadCalls();
+        @endpermission
         loadProducts();
         loadNotes();
         loadTimeline();

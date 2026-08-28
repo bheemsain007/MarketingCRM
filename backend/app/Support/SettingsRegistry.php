@@ -133,8 +133,12 @@ class SettingsRegistry
                 ['meta_cloud', 'gupshup', 'interakt', 'other']),
             self::credential('providers.whatsapp.phone_number_id', 'whatsapp', 'Phone number ID', 'string'),
             self::credential('providers.whatsapp.token', 'whatsapp', 'Access token (WHATSAPP_API_KEY)', 'secret'),
-            self::credential('providers.whatsapp.webhook_verify_token', 'whatsapp', 'Webhook verify token', 'secret'),
-            self::credential('providers.whatsapp.app_secret', 'whatsapp', 'App secret', 'secret'),
+            self::credential('providers.whatsapp.webhook_verify_token', 'whatsapp', 'Webhook verify token', 'secret',
+                'Echoed back to Meta when /api/v1/webhooks/whatsapp is subscribed (SEC-WH-02).'),
+            self::credential('providers.whatsapp.app_secret', 'whatsapp', 'App secret', 'secret',
+                'Verifies the X-Hub-Signature-256 on Cloud API delivery and read receipts. Until it is set, '
+                .'/api/v1/webhooks/whatsapp refuses everything - it can mark messages read and fail them, so an '
+                .'unsigned one is worse than none. A BSP that cannot sign this way uses /webhooks/delivery instead.'),
 
             // Phase 12
             self::credential('providers.meta.app_id', 'meta', 'Meta app ID', 'string'),

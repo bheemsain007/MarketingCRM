@@ -11,6 +11,7 @@ use App\Jobs\DispatchCampaign;
 use App\Models\Campaign;
 use App\Models\Lead;
 use App\Models\User;
+use App\Services\Messaging\MessageDriverManager;
 use App\Services\Notifications\NotificationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -33,7 +34,30 @@ class CampaignService
     public function __construct(
         private readonly CampaignEligibility $eligibility,
         private readonly NotificationService $notifications,
+        private readonly MessageDriverManager $drivers,
     ) {}
+
+    /**
+     * The caveat an operator has to see before believing a campaign worked.
+     *
+     * An unconfigured channel falls back to `LogDriver`: the message is recorded
+     * as sent and nobody receives anything. `MessageController::store()` already
+     * says so on its 202 for a single send - a campaign runs the same fallback
+     * across the whole audience, where the same silence is fifty thousand times
+     * more expensive and the counters read as a completely successful send
+     * (FR-COMM-05).
+     */
+    public function deliveryCaveat(Campaign $campaign): ?string
+    {
+        if ($this->drivers->isLive($campaign->channel)) {
+            return null;
+        }
+
+        return sprintf(
+            'No provider is configured for %s yet, so messages are recorded but not delivered.',
+            $campaign->channel->label(),
+        );
+    }
 
     /**
      * @param  array<string, mixed>  $data
@@ -167,7 +191,21 @@ class CampaignService
             return;
         }
 
+        // Re-read before quoting the counters: the caller's instance was loaded
+        // when its own recipient job started, and every sibling job has been
+        // incrementing these columns since. The job that happens to finish last
+        // would otherwise report the totals as they stood when it began.
+        $campaign->refresh();
+
         $failed = $campaign->total_targeted > 0 && $campaign->total_sent === 0;
+
+        /*
+         * The counters below say "sent". On an unkeyed channel that is true of
+         * the record and false of the world, and this notification is where an
+         * operator decides the campaign worked - so the caveat travels with the
+         * numbers rather than being left for them to infer.
+         */
+        $caveat = $this->deliveryCaveat($campaign);
 
         $this->notifications->notify(
             $owner,
@@ -175,11 +213,12 @@ class CampaignService
             ($failed ? 'Campaign failed: ' : 'Campaign completed: ').$campaign->name,
             [
                 'body' => sprintf(
-                    '%d sent, %d skipped of %d targeted.',
+                    '%d sent, %d skipped, %d failed of %d targeted.',
                     $campaign->total_sent,
                     $campaign->total_skipped,
+                    $campaign->total_failed,
                     $campaign->total_targeted,
-                ),
+                ).($caveat !== null ? ' '.$caveat : ''),
                 'reference' => $campaign,
                 'action_url' => '/campaigns/'.$campaign->id,
             ],

@@ -2,11 +2,26 @@
 @section('title', 'Leads')
 
 @section('content')
-    @permission('leads.create')
-        <div class="d-flex justify-content-end mb-3">
-            <a href="{{ route('web.leads.create') }}" class="btn btn-sm btn-primary">
-                <i class="bi bi-plus-lg me-1"></i>New lead
-            </a>
+    @permission('leads.create', 'leads.export')
+        <div class="d-flex justify-content-end gap-2 mb-3">
+            @permission('leads.export')
+                {{--
+                    Opens the panel; it does not export. A bulk export is the
+                    whole lead database as a file (SEC-PII-04), so the button
+                    that starts one is inside, next to the description of what
+                    it would contain - not one stray click away from the list.
+                --}}
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        data-bs-toggle="modal" data-bs-target="#export-modal">
+                    <i class="bi bi-download me-1"></i>Export
+                </button>
+            @endpermission
+
+            @permission('leads.create')
+                <a href="{{ route('web.leads.create') }}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-lg me-1"></i>New lead
+                </a>
+            @endpermission
         </div>
     @endpermission
 
@@ -65,6 +80,54 @@
             </div>
         </div>
     </div>
+
+    @permission('leads.export')
+    <div class="modal fade" id="export-modal" tabindex="-1" aria-labelledby="export-modal-title" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h6" id="export-modal-title">Export leads to CSV</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-2">
+                        The export contains every lead matching the filters on screen right now, with full
+                        contact details. Sort order and paging do not apply — a CSV has neither.
+                    </p>
+
+                    {{-- Filled at open time from the same filter set the list is showing. --}}
+                    <p class="small mb-3" id="export-scope"></p>
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <button class="btn btn-sm btn-primary" id="export-start">
+                            <i class="bi bi-download me-1"></i>Export current view
+                        </button>
+                        <button class="btn btn-sm btn-outline-secondary" id="export-refresh">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead class="small text-muted">
+                            <tr><th>Requested</th><th>Status</th><th class="text-end">Rows</th>
+                                <th>Available until</th><th></th></tr>
+                            </thead>
+                            <tbody id="export-rows">
+                            <tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <p class="small text-muted mt-3 mb-0">
+                        Exports are prepared in the background — a large one keeps going after you close this
+                        window. Finished files are deleted once they pass the date shown above.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    @endpermission
 @endsection
 
 @push('scripts')
@@ -72,8 +135,16 @@
 $(function () {
     let page = 1;
 
-    function load() {
-        const params = { page: page, sort: $('#f-sort').val() };
+    /*
+     * The filter set the screen is currently showing.
+     *
+     * Shared with the export request rather than rebuilt there, so "export what
+     * I am looking at" is the same audience the list drew (FR-LEAD-12) - two
+     * copies of this would drift and nobody would notice until a CSV came back
+     * with the wrong people in it.
+     */
+    function filters() {
+        const params = {};
 
         const q = $('#f-q').val();
         if (q) params.q = q;
@@ -82,6 +153,12 @@ $(function () {
         // The API rejects unknown filter fields outright rather than ignoring
         // them, so only send a filter that actually has a value.
         if (status) params['filter[status]'] = status;
+
+        return params;
+    }
+
+    function load() {
+        const params = $.extend({ page: page, sort: $('#f-sort').val() }, filters());
 
         $.getJSON('/api/v1/leads', params)
             .done(function (response) {
@@ -132,6 +209,104 @@ $(function () {
     $('#page-next').on('click', function () { page++; load(); });
 
     load();
+
+@permission('leads.export')
+    /*
+     * Bulk CSV export (FR-LEAD-12, SEC-PII-04).
+     *
+     * The API accepts the job and queues it (202) - it does not return a file -
+     * so this screen never offers a download until the export says it is
+     * `completed`. Anything else would hand the user a link to a 404.
+     */
+    let exportPoll = null;
+
+    function describeScope() {
+        const parts = [];
+
+        const q = $('#f-q').val();
+        if (q) parts.push('search “' + CRM.escape(q) + '”');
+
+        if ($('#f-status').val()) parts.push('status ' + CRM.escape($('#f-status option:selected').text()));
+
+        // Said plainly, because an unfiltered export is the entire lead
+        // database and the operator should know that before clicking.
+        $('#export-scope').html(parts.length
+            ? 'Exporting: ' + parts.join(', ') + '.'
+            : '<span class="text-danger-emphasis">No filters — this exports every lead you can see.</span>');
+    }
+
+    function exportRow(row) {
+        const tone = { completed: 'success', failed: 'danger',
+                       processing: 'info', pending: 'secondary' }[row.status] || 'secondary';
+
+        // `expires_at` is the download window the API enforces; past it the
+        // endpoint refuses and the retention sweep deletes the file
+        // (SEC-PII-05). Either way there is nothing to link to.
+        const expired = row.expires_at && new Date(row.expires_at) <= new Date();
+
+        let action = '';
+        if (row.status === 'completed' && !expired) {
+            action = '<a class="btn btn-sm btn-outline-primary" '
+                + 'href="/api/v1/leads/exports/' + row.id + '/download">Download</a>';
+        } else if (row.status === 'completed') {
+            action = '<span class="small text-muted">File deleted</span>';
+        } else if (row.status === 'failed') {
+            action = '<span class="small text-muted">' + CRM.escape(row.failure_reason || '') + '</span>';
+        } else {
+            action = '<span class="small text-muted">Still preparing…</span>';
+        }
+
+        return '<tr>'
+            + '<td class="small">' + row.requested_at.substring(0, 16).replace('T', ' ') + '</td>'
+            + '<td><span class="badge text-bg-' + tone + '">' + CRM.escape(row.status_label) + '</span></td>'
+            + '<td class="text-end small">' + (row.row_count === null ? '—' : row.row_count) + '</td>'
+            + '<td class="small text-muted">'
+            + (row.expires_at ? row.expires_at.substring(0, 10) : '—') + '</td>'
+            + '<td class="text-end">' + action + '</td>'
+            + '</tr>';
+    }
+
+    function loadExports() {
+        $.getJSON('/api/v1/leads/exports')
+            .done(function (response) {
+                const items = response.data.items;
+
+                $('#export-rows').html(items.length
+                    ? items.map(exportRow).join('')
+                    : '<tr><td colspan="5" class="text-center text-muted py-4">No exports yet.</td></tr>');
+
+                // Poll only while something is actually running, and only while
+                // the panel is on screen (mirrors the imports screen).
+                clearTimeout(exportPoll);
+                if (items.some(function (row) { return !row.is_finished; })) {
+                    exportPoll = setTimeout(loadExports, 3000);
+                }
+            })
+            .fail(function (xhr) {
+                CRM.alert(CRM.errorFrom(xhr));
+                $('#export-rows').html('<tr><td colspan="5" class="text-center text-muted py-4">Could not load exports.</td></tr>');
+            });
+    }
+
+    $('#export-start').on('click', function () {
+        const button = $(this).prop('disabled', true);
+
+        $.post('/api/v1/leads/export', filters())
+            .done(function (response) {
+                // 202: accepted, not finished. The file is written on the queue.
+                CRM.alert(response.message, 'success');
+                loadExports();
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); })
+            .always(function () { button.prop('disabled', false); });
+    });
+
+    $('#export-refresh').on('click', loadExports);
+
+    $('#export-modal')
+        .on('show.bs.modal', function () { describeScope(); loadExports(); })
+        .on('hidden.bs.modal', function () { clearTimeout(exportPoll); });
+@endpermission
 });
 </script>
 @endpush

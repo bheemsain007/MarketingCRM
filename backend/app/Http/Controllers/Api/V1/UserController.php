@@ -35,7 +35,26 @@ class UserController extends Controller
             allowedIncludes: ['roles', 'team'],
         );
 
-        $query = User::query()->with(['roles:id,name', 'team:id,name']);
+        /*
+         * The role select must cover everything UserResource reads, not just
+         * what the list "looks like" it needs. `label` and `data_scope` are
+         * both read there, and a column that was never selected comes back
+         * null rather than failing - so narrowing this to (id, name) made
+         * every colleague render with a blank role label and, because
+         * `dataScope()` falls back to Own when no scope is present, as scoped
+         * to their own records. The list then disagreed with the same user
+         * fetched by id, which on an authorization display is a lie, not a
+         * cosmetic gap (SEC-AUTHZ-01).
+         *
+         * `roles.permissions` is loaded here too because the resource asks for
+         * `permissionNames()` on every row; without it each row resolves its
+         * own permissions one query at a time (ARCHITECTURE §2).
+         */
+        $query = User::query()->with([
+            'roles:id,name,label,data_scope',
+            'roles.permissions',
+            'team:id,name',
+        ]);
 
         if ($search = $request->query('q')) {
             $query->where(fn ($q) => $q

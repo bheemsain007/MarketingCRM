@@ -303,6 +303,32 @@ class UserAdminTest extends TestCase
     }
 
     #[Test]
+    public function the_list_describes_a_colleagues_role_and_scope_exactly_as_the_detail_does(): void
+    {
+        $this->actingAsRole(RoleName::Admin);
+        $manager = $this->user(RoleName::Manager);
+
+        $row = collect($this->getJson('/api/v1/users')->assertOk()->json('data.items'))
+            ->firstWhere('id', $manager->id);
+        $detail = $this->getJson("/api/v1/users/{$manager->id}")->assertOk()->json('data');
+
+        /*
+         * The list narrowed its role select to (id, name) while the resource
+         * reads `label` and `data_scope`. An unselected column comes back null
+         * rather than failing, so every colleague rendered with a blank role
+         * and - because the scope resolver falls back to Own when it finds no
+         * scope - as though they could see only their own records. Two screens
+         * disagreeing about who can see what is an authorization lie.
+         */
+        $this->assertSame($detail['data_scope'], $row['data_scope']);
+        $this->assertSame($detail['roles'], $row['roles']);
+        $this->assertSame($detail['permissions'], $row['permissions']);
+
+        $this->assertSame('team', $row['data_scope']);
+        $this->assertSame('Manager', $row['roles'][0]['label']);
+    }
+
+    #[Test]
     public function a_user_password_is_never_returned(): void
     {
         $this->actingAsRole(RoleName::Admin);

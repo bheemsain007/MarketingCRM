@@ -5,12 +5,15 @@ namespace App\Jobs;
 use App\Enums\CampaignSkipReason;
 use App\Enums\CampaignStatus;
 use App\Exceptions\ApiException;
+use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Services\Campaigns\CampaignEligibility;
 use App\Services\Campaigns\CampaignService;
 use App\Services\Messaging\OutboundMessageService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * One campaign message to one lead (BR-CAMP-01/02, BR-DNC-03/05).
@@ -132,7 +135,50 @@ class SendCampaignMessage implements ShouldQueue
 
         $campaign->increment($message->status === 'skipped' ? 'total_skipped' : 'total_sent');
 
-        $this->completeIfFinished($recipient);
+        $this->completeIfFinished($campaign);
+    }
+
+    /**
+     * Attempts exhausted. The row must not be left `pending`.
+     *
+     * Completion is decided by "no recipient row is still pending", so a job
+     * that gives up without recording an outcome holds its campaign Running for
+     * ever: never completing, never notifying its owner, never leaving the
+     * in-flight list. The same reason `ImportLeadRow::failed()` exists - and the
+     * same rule, BR-DNC-05, that forbids "nothing happened" as an outcome.
+     */
+    public function failed(Throwable $e): void
+    {
+        Log::error('Campaign message job failed permanently.', [
+            'campaign_recipient_id' => $this->recipientId,
+            'exception' => $e->getMessage(),
+        ]);
+
+        /*
+         * Conditional on `pending` in one statement: the throw may have come
+         * after the row was already resolved (the counter increments sit after
+         * the update), and re-marking it would both lose the real outcome and
+         * count the recipient twice.
+         */
+        $claimed = CampaignRecipient::where('id', $this->recipientId)
+            ->where('status', 'pending')
+            ->update(['status' => 'failed', 'processed_at' => now()]);
+
+        if ($claimed === 0) {
+            return;
+        }
+
+        $campaign = CampaignRecipient::find($this->recipientId)?->campaign;
+
+        if ($campaign === null) {
+            return;
+        }
+
+        // `total_failed` is what the campaign report reads for failure_rate;
+        // until this handler existed nothing ever wrote to it.
+        $campaign->increment('total_failed');
+
+        $this->completeIfFinished($campaign);
     }
 
     private function skip(CampaignRecipient $recipient, CampaignSkipReason $reason): void
@@ -145,19 +191,19 @@ class SendCampaignMessage implements ShouldQueue
 
         $recipient->campaign?->increment('total_skipped');
 
-        $this->completeIfFinished($recipient);
+        $this->completeIfFinished($recipient->campaign);
     }
 
     /**
      * Marks the campaign complete once the last recipient is done.
      *
      * Decided by whichever job finishes last rather than announced up front,
-     * because the fan-out does not know how long the sends will take.
+     * because the fan-out does not know how long the sends will take. A row
+     * marked `failed` counts as done here exactly like a send or a skip - that
+     * is what lets a dead job's campaign still reach a terminal state.
      */
-    private function completeIfFinished(CampaignRecipient $recipient): void
+    private function completeIfFinished(?Campaign $campaign): void
     {
-        $campaign = $recipient->campaign;
-
         if ($campaign === null || $campaign->status !== CampaignStatus::Running) {
             return;
         }

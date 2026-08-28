@@ -18,8 +18,8 @@ use Illuminate\Support\Facades\Cache;
  * compliance question nobody can answer months later.
  *
  * A heartbeat inverts that: absence becomes the signal. `crm:production-check`
- * reads it, GET /up/scheduler exposes it to an uptime monitor, and both fail
- * loudly once it goes stale.
+ * reads it, GET /api/v1/health/scheduler exposes it to an uptime monitor, and
+ * both fail loudly once it goes stale.
  *
  * **The cache store, not the database.** On the Hostinger target the cache store
  * IS the database (DEPLOYMENT §3A), so this is a durable row either way - but

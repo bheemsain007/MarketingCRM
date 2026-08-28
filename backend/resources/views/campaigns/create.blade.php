@@ -122,8 +122,44 @@ $(function () {
         return body;
     }
 
+    /*
+        The envelope carries a FLAT array of {field, code, message} (NFR-03),
+        not Laravel's field-keyed bag - reading it as a bag meant no field was
+        ever highlighted. Same painting rule as leads/form.blade.php: anything
+        with an input AND a feedback slot lands under it, everything else goes
+        to the banner so a rule violation is never swallowed.
+    */
+    function inputIdFor(field) {
+        return field
+            .replace('audience_filters.', '')   // audience_filters.status -> status
+            .replace(/\.\d+$/, '')              // status.0 -> status
+            .replace(/_at$/, '');               // scheduled_at -> scheduled
+    }
+
+    function showErrors(xhr) {
+        const errors = (xhr.responseJSON && xhr.responseJSON.errors) || [];
+        const unattached = [];
+
+        errors.forEach(function (error) {
+            const input = error.field ? $('#f-' + inputIdFor(error.field)) : $();
+            const slot = input.closest('div').find('.invalid-feedback');
+
+            if (input.length) input.addClass('is-invalid');
+
+            // The audience selects have no feedback slot, so their message
+            // would vanish if it were treated as attached.
+            if (slot.length) slot.text(error.message);
+            else unattached.push(error.message);
+        });
+
+        if (!errors.length || unattached.length) {
+            CRM.alert(unattached.length ? unattached.join(' ') : CRM.errorFrom(xhr));
+        }
+    }
+
     $('#save-draft').on('click', function () {
         $('.is-invalid').removeClass('is-invalid');
+        $('.invalid-feedback').text('');
 
         const method = campaignId ? 'PATCH' : 'POST';
         const url = campaignId ? '/api/v1/campaigns/' + campaignId : '/api/v1/campaigns';
@@ -137,16 +173,7 @@ $(function () {
                 CRM.alert('Draft saved.', 'success');
                 loadPreview();
             })
-            .fail(function (xhr) {
-                const failures = xhr.responseJSON && xhr.responseJSON.errors;
-                if (failures) {
-                    Object.keys(failures).forEach(function (field) {
-                        const input = $('#f-' + field.replace('_at', '').replace('audience_filters.', ''));
-                        input.addClass('is-invalid').siblings('.invalid-feedback').text(failures[field][0]);
-                    });
-                }
-                CRM.alert(CRM.errorFrom(xhr));
-            });
+            .fail(showErrors);
     });
 
     function loadPreview() {

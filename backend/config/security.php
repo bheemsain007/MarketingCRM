@@ -16,6 +16,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Trusted proxies (SEC-OPS-02, T-30)
+    |--------------------------------------------------------------------------
+    | Which upstream proxies may set X-Forwarded-*. Applied by bootstrap/app.php.
+    |
+    | It has to live here rather than being read with env() from
+    | bootstrap/app.php: the withMiddleware() closure there runs when the HTTP
+    | kernel is RESOLVED, which is before LoadEnvironmentVariables parses .env,
+    | so an env() call in that closure returns its own default and a pinned list
+    | is silently ignored. What that leaves behind is trust-everything, and a
+    | client can then set X-Forwarded-For freely - which decides request()->ip(),
+    | and so the rate-limit key and the address on every audit row.
+    |
+    | `*` means "trust whoever connected". That is correct on the shared-hosting
+    | target (DEPLOYMENT §3A), where the app is only reachable through the
+    | provider's own proxy so no attacker-supplied header arrives unfiltered, and
+    | wrong on a public host. Behind your own load balancer, pin it to that
+    | balancer's address; the value is comma-separated and the literal
+    | `REMOTE_ADDR` is accepted. An empty value trusts no proxy at all.
+    */
+    'trusted_proxies' => env('TRUSTED_PROXIES', '*'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Response headers (SEC-OPS-02)
     |--------------------------------------------------------------------------
     | Applied by App\Http\Middleware\SecurityHeaders on the web group.

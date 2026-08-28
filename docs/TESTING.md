@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Last updated** | 2026-08-10 (Phase 1) |
-| **Status** | Strategy defined; **no test suite exists** — scaffolding lands in Phase 3 |
+| **Version** | 1.2 |
+| **Last updated** | 2026-08-28 |
+| **Status** | **A large suite exists and is green.** Backend: **1,117 tests / 3,764 assertions passing** (§7, confirmed 2026-08-28). Flutter: **119 tests passing**. *(This line described the pre-Phase-3 state — "no test suite exists" — until now; it had not been touched since 2026-08-10 despite MODULE_STATUS's Definition of Done making a recorded result here the precondition for marking any phase Done, NFR-09.)* |
 | **Related** | [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) · [BUSINESS_RULES.md](BUSINESS_RULES.md) · [MODULE_STATUS.md](MODULE_STATUS.md) |
 
 ---
@@ -74,6 +74,16 @@ Two rules are named in tests but cited in no source file (BR-ASSIGN-06, BR-PROD-
 genuinely enforced; the behaviour is proven at the boundary rather than annotated at the
 implementation, which is the weaker of the two places to record it but not a coverage gap.
 
+> **Corrected 2026-08-28** — this was a point-in-time audit dated 2026-08-11 and was never revisited
+> as the gaps it found closed. Three of the four rows above are stale: BR-CAMP-01..05 now has a named
+> test (`Feature\Campaigns\CampaignEngineTest`, §7 "Campaign engine (Phase 18)", 2026-08-12);
+> BR-DUP-03/BR-DUP-04 now has one (`Feature\Leads\LeadDuplicateTest`, §7 "Duplicate review and merge
+> (T-64)", 2026-08-12); BR-DNC-04 now has one (§7 "DNC matrix overrides (T-65)", 2026-08-12). Only
+> **BR-REC-01..03** is still accurately "no test" — call recording is still blocked on T-44 (MODULE_STATUS
+> Phase 32). The Defined/Cited/Named counts above were not recomputed for this correction; a great deal
+> of code and many tests were added after 2026-08-11 and those counts should be treated as historical,
+> not current.
+
 ## 4. Critical Rule Coverage (mandatory)
 
 These are the rules where a silent regression is a business or compliance problem. Each needs explicit, named tests — not incidental coverage (NFR-10).
@@ -82,7 +92,7 @@ These are the rules where a silent regression is a business or compliance proble
 
 | Test | Proves |
 |------|--------|
-| Suppressed lead excluded — one test **per channel**: Email, WhatsApp, SMS, RCS, Voice, AI Calling, human call, auto dialer, scheduled campaign | FR-DNC-01 — ✅ **all but scheduled campaign**, which needs Phase 18 (T-61). See `Feature\Dnc\DncChannelMatrixTest` |
+| Suppressed lead excluded — one test **per channel**: Email, WhatsApp, SMS, RCS, Voice, AI Calling, human call, auto dialer, scheduled campaign | FR-DNC-01 — ✅ **all channels**, including scheduled campaigns, closed 2026-08-12 by Phase 18 (T-61 — see `Feature\Campaigns\CampaignEngineTest`, "a lead suppressed after audience build is skipped at dispatch"). See `Feature\Dnc\DncChannelMatrixTest` |
 | Reason × channel matrix: Wrong Number blocks phone channels but **not** email; Bounced Email blocks email only | BR-DNC-02 |
 | Suppression applied *after* audience build still blocks at dispatch time | BR-DNC-03 |
 | Every skip writes a log row with reason | BR-DNC-05 |
@@ -204,6 +214,17 @@ Updated at the end of every phase, alongside the phase completion report.
 | ↳ 8 (assignment UI) | 2026-08-11 | 6 | 6 | 0 | — | +5 page tests: the pool opens for a manager, a telecaller is refused it, navigation hides it from non-assigners, the assignment card appears on a lead only for assigners, and the pool is in the session-required set. +1 API test for the **`null` filter operator**, which was untested and which the whole pool page depends on |
 | ↳ 8 (lead form) | 2026-08-11 | 10 | 10 | 0 | — | +7 page tests: create-form permission gating, the `/leads/create` route-ordering regression, edit-form prefill, the IDOR check on the edit URL, read-only roles refused on both, edit not offering create-only fields, and the detail page linking to edit only for editors. +3 API tests for **two bugs the form exposed**: `PATCH /leads/{id}` never translated `alt_phone` to the `alt_phone_e164` column (a 500 in dev, a silent discard in production), and `name` was `sometimes\|string`, so an empty string blanked the lead's name. **The feature suite could not be run**: the server on :3306 is MariaDB 10.4.32 rather than the pinned MySQL 8.4.9, and `crm_user`, `marketing_crm` and `marketing_crm_test` are all absent. Views compile, routes register, and the 62 DB-free unit tests pass — re-run this row's tests once the database is restored |
 | 7 | 2026-08-10 | 273 (993 assertions) | 273 | 0 | — | +42 status and product-interest tests. **Caught a real bug**: product-interest propagation called the status service with a null actor, and the reopen guard skipped authority checks for system callers — so recording interest against a `Lost` lead silently reopened it, with no manager and no reason. Fixed in both places |
+| 27, 19, 24/25, 11 | 2026-08-12 | — | — | 0 | — | The rest of the server-side roadmap in one pass — see MODULE_STATUS Phases 11/19/24/25/27 for what each added. Suite reached **789 passing** at this point |
+| 14/16/17 (WhatsApp/RCS/Voice) | 2026-08-12 | — | — | 0 | — | One driver class per channel on the Phase 13 pipeline; unkeyed via `LogDriver` |
+| Password recovery (SEC-AUTH-06) | 2026-08-13 | 26 | 26 | 0 | SEC-AUTH-06 | Hardened against an adversarial review that found seven real findings (a bcrypt timing oracle, a token usable after suspension, sessions surviving a reset, a shared limiter enabling full lockout, a mail-failure existence leak, a Unicode limiter bypass, an unbounded audit write) |
+| Sales + payments UI | 2026-08-13 | — | — | 0 | — | Deals tab (products, quotations, record-sale) and `/payments` for ROLE-05 |
+| Phase 30 (Flutter client) | 2026-08-13 | 87 (Flutter) | 87 | 0 | — | First Flutter suite. Tests run against the real `ApiClient` and a scripted backend, not a mocked repository, so envelope decoding and status-to-exception mapping are genuinely exercised |
+| Phase 23 gateway + Phase 29 | 2026-08-13 | — | — | 0 | — | `Feature\Payments\PaymentLinkTest` (606 lines) + `Feature\Security\SecurityHeadersTest` (142 lines) added. **Backend: 851 passing, 0 failing** at this point. Pint and PHPStan clean |
+| Six correctness bugs + templates (FR-COMM-02) | 2026-08-17 | — | — | 0 | — | Each of the six bugs reproduced with a failing test before the fix (scheduled campaigns never dispatching, an archived lead stalling a campaign forever, no rate limiter on `campaigns.start`, delivery status stuck at `sent` for four channels, abandoned work sessions never closing, audit-log immutability being a docblock rather than a control). **Backend: 946 passing, 0 failing** at this point |
+| Mobile contact actions + templates | 2026-08-17 | 119 (Flutter) | 119 | 0 | — | +13 over the Phase 30 baseline of 106 (`flutter test`). `flutter analyze`: no issues |
+| Lead export, attendance, pre-aggregation, notification triggers | 2026-08-27 | — | — | 0 | — | New `Feature\Leads\LeadExportTest`, `Feature\Attendance\*`, `Feature\Reports\ReportPreAggregationTest`, `Feature\Notifications\NotificationTriggersTest` |
+| Nine Web CRM screens | 2026-08-27 | — | — | 0 | — | Templates, notifications, cross-lead follow-up/call/message history, DNC skip log, tag management, plus lead-page score/archive/recording/AI-call/interest controls |
+| **Everything to date** | **2026-08-28** | **1,117 (3,764 assertions)** | **1,117** | **0** | — | ✅ **Verified.** Backend suite, confirmed current at this reconciliation pass — three separate documents (MODULE_STATUS, TESTING, API_DOCUMENTATION) had each stated a different, older total before this pass. **Flutter: 119 (2026-08-17), 0 failing.** ⚠️ Still on MariaDB 10.4, not the pinned MySQL 8.4.9 (T-02, T-48) — good evidence, not proof against the production engine. *(The rows between "Everything to date, 2026-08-12, 720" and here are summarised from commit messages, not itemised phase-by-phase the way earlier rows are — the per-phase breakdown for this period lives in the commits' own test output, not restated here.)* |
 
 ### Suite composition after Phase 2
 

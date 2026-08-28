@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Last updated** | 2026-08-10 (Phase 1) |
-| **Status** | Baseline agreed; ADR-A..D carry assumed defaults pending confirmation |
+| **Version** | 1.2 |
+| **Last updated** | 2026-08-28 (§8 scheduler table and §4 job-batching claim corrected against the actual code; ADR-B status updated) |
+| **Status** | Implemented. ADR-A, ADR-C, ADR-E confirmed and built; ADR-B resolved for calling (recording remains open on T-44); ADR-D's named vendors are mostly confirmed, BSP/RCS/Voice vendor choice still open (T-31/32/33) |
 | **Related** | [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) · [BUSINESS_RULES.md](BUSINESS_RULES.md) · [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md) · [SECURITY.md](SECURITY.md) |
 
 ---
@@ -136,7 +136,7 @@ Bulk and slow work never runs in an HTTP request (NFR-06). Redis is the queue dr
 **Design rules**
 
 - A campaign **fans out**: one `DispatchCampaignJob` builds the eligible audience and enqueues one job *per recipient* onto `campaigns`. Recipient jobs are independently retryable, so one bad number cannot fail a 50,000-lead campaign (FR-CAMP-05).
-- Campaign send jobs use Laravel **job batching** so pause/resume/stop and progress counts map to batch operations rather than bespoke state tracking (FR-CAMP-02).
+- ⚠️ **Corrected 2026-08-28**: campaign send jobs do **not** use Laravel job batching. There is no `Bus::batch()` and no `Batchable` job anywhere in the codebase. Pause/resume/stop and progress are bespoke state tracking instead: `campaigns.status` (draft/scheduled/running/paused/stopped/completed) plus the four counters on the same row, updated directly by `CampaignService` and `SendCampaignMessage` as each recipient job runs. `campaigns.batch_id` is a UUID `CampaignService` generates for its own correlation, not a Laravel batch id — it cannot be handed to `Bus::findBatch()`. `lead_imports.batch_id` is never written at all. This works correctly (FR-CAMP-02's pause/resume/stop/progress all function), it just is not the mechanism this line described.
 - **Per-provider rate limiting** via Redis-backed throttling so a burst never trips a vendor's limit.
 - Every job is **idempotent by key** — re-running a recipient job must not send twice (see §6).
 - **Failed jobs** land in `failed_jobs` with full context and are surfaced in campaign logs, never silently discarded (FR-COMM-06).
@@ -216,17 +216,23 @@ MySQL remains the system of record; nothing business-critical exists only in Red
 
 ## 8. Scheduler
 
-Laravel Scheduler (single cron entry) drives:
+Laravel Scheduler (single cron entry, [DEPLOYMENT §5](DEPLOYMENT.md#5-scheduler)) drives everything
+`routes/console.php` registers with `Schedule::command()` — currently ten entries, not the seven this
+table originally proposed. **Corrected 2026-08-28** against the actual registrations:
 
-| Job | Cadence | Purpose |
-|-----|---------|---------|
-| Scheduled campaign dispatch | minute | Start campaigns whose time has arrived |
-| Follow-up reminders | minute | Fire due reminders (FR-FUP-01) |
-| Missed follow-up detection | frequent | Flag overdue follow-ups (FR-FUP-03) |
-| Report pre-aggregation | hourly/nightly | Keep dashboards fast (FR-RPT-05) |
-| Recording retention purge | nightly | Delete expired recordings, audited (FR-REC-05) |
-| Provider status reconciliation | periodic | Poll for statuses missed by webhooks |
-| Queue/failed-job health check | periodic | Surface stuck or failing work |
+| Job | Cadence | Purpose | Status |
+|-----|---------|---------|--------|
+| Scheduler heartbeat | every minute | Proof of life for the cron entry itself — everything below is silent without it | **Built & registered** (`crm:scheduler-heartbeat`) |
+| Scheduled campaign dispatch | every minute | Start campaigns whose time has arrived (FR-CAMP-02) | **Built & registered** (`crm:dispatch-scheduled-campaigns`) |
+| Follow-up reminders + missed detection | every minute | Fire due reminders and flag overdue follow-ups (FR-FUP-01/03) | **Built & registered** (`crm:process-follow-ups`) |
+| Report pre-aggregation | nightly (04:45) | Keep dashboards fast for fully-past periods (FR-RPT-05) | **Built & registered** (`crm:aggregate-daily-reports`) |
+| Recording retention purge | nightly (03:30) | Delete expired recordings, audited (FR-REC-05) | **Built & registered** (`crm:purge-recordings`) |
+| Lead import/export file purge | nightly (03:30) | Bulk-PII retention (SEC-PII-05) | **Built & registered** (`leads:purge-import-files`, `leads:purge-export-files`) |
+| Score decay | nightly (04:15) | BR-SCORE-01/BR-TEMP-02 | **Built & registered** (`crm:decay-lead-scores`) |
+| Overdue payments | daily (06:00) | BR-PAY-06 | **Built & registered** (`crm:mark-overdue-payments`) |
+| Abandoned work-session sweep | every 15 min | Close a session nobody logged out of before its open-ended hours corrupt telecaller pay | **Built & registered** (`crm:close-stale-work-sessions`) |
+| Provider status reconciliation | — | Poll for statuses missed by webhooks | ⚠️ **Specified, not built.** No command, job or service exists anywhere in the codebase for this — every channel currently relies entirely on the webhook arriving |
+| Queue/failed-job health check | — | Surface stuck or failing work | ⚠️ **Specified, but not scheduled.** `crm:production-check` (built 2026-08-13, Phase 29) does check queue backlog and `failed_jobs`, but it is **not** in `routes/console.php` — it runs only when a human runs it, e.g. in a deploy script (`crm:production-check \|\| exit 1`, DEPLOYMENT §10). There is no periodic, unattended run of it |
 
 Scheduled commands are thin — they dispatch jobs; they do not contain business logic.
 
@@ -285,11 +291,13 @@ All seven effects commit together or not at all (FR-INT-02).
 - Bootstrap 5 and jQuery are loaded from a **CDN**, not built with Vite: the shared-hosting target has no Node ([DEPLOYMENT §3A](DEPLOYMENT.md#3a-shared-hosting-mode-hostinger--active-target-)), so a deploy stays "upload plus composer". The cost is the CSP looseness already tracked as **T-39**; Vite remains wired up if the assets ever need self-hosting.
 
 ### ADR-B — Human calling mechanism
-**Status:** Proposed default · **confirm before Phase 9** (highest-impact open decision)
-**Decision:** The Android app places calls natively and records locally where the OS/device and applicable rules permit. The Web CRM is the system of record and orchestrator: it creates the call record and dial intent, drives auto-dialer queue/skip rules, and ingests the uploaded recording afterward.
+**Status:** ⚠️ **Resolved for calling, narrower than proposed (2026-08-13); recording is a separate open question (T-44)**. *Corrected 2026-08-28 — this said "Proposed default, confirm before Phase 9" for 18 days after Phase 9 (and 10, 11, 30, 31) were all built.*
+**Decision as originally proposed:** The Android app places calls natively and records locally where the OS/device and applicable rules permit. The Web CRM is the system of record and orchestrator: it creates the call record and dial intent, drives auto-dialer queue/skip rules, and ingests the uploaded recording afterward.
+**As built (Phase 31, 2026-08-13):** Narrower on purpose. The app does **not** dial natively and does **not** record — it asks `GET /leads/{id}/callability`, then hands the number to the OS's own `tel:` intent (`PhoneDialer`), and the telecaller reports the outcome back through the app. This still satisfies FR-CALL-03 ("initiating a call creates a call record and dial intent") without the app ever touching the audio stream, which sidesteps Android's call-recording restrictions for calling itself. The server orchestrator half — call record, dial intent, auto-dialer queue/skip rules — was already built at Phase 9/10 and needed no change either way, exactly as this ADR predicted.
+**What is still open:** device-side **recording** (Phase 32) — whether this app can capture the audio at all on a modern handset — gated on **T-44**, a physical-device test. Nothing about the calling decision above reopens depending on that answer.
 **Rationale:** Section 9 (web one-click calling + auto dialer) and Section 10 (Android local recording) only reconcile if the device dials and the server orchestrates.
 **Alternative rejected:** Browser-based CPaaS/WebRTC softphone (Twilio/Exotel-style) — not indicated by the brief, and incompatible with the stated device-side recording flow.
-**Impact if wrong:** Phases 9, 10, 11, 31, 32 change materially.
+**Impact if T-44 answers "no"**: Phase 32 only. Phases 9, 10, 11, 30, 31 are already built and do not change.
 
 ### ADR-C — Multi-tenancy timing
 **Status:** Accepted · implemented Phase 2 (amended during implementation)

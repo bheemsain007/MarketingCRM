@@ -15,6 +15,7 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -51,24 +52,10 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         /*
-         * Shared hosting terminates TLS at the host's proxy and forwards
-         * plain HTTP to PHP (DEPLOYMENT §3A). Without this, every url() is
-         * built as http://, `$request->secure()` is false - so HSTS is never
-         * sent - and `SESSION_SECURE_COOKIE` on a request Laravel believes is
-         * insecure produces a cookie the browser then refuses to return, which
-         * looks exactly like "login does nothing".
-         *
-         * `*` is the correct value HERE and would be wrong on a public host:
-         * the app is only reachable through the provider's own proxy, so there
-         * is no path by which an attacker's X-Forwarded-For arrives unfiltered.
-         * On a VPS behind your own load balancer, pin this to its address.
-         * TRUSTED_PROXIES exists so that is a config change (T-30).
+         * Trusted proxies are configured in the ->booted() callback below, NOT
+         * here. This closure runs when the HTTP kernel is resolved, which is
+         * before .env and config are loaded (T-30) - see the callback.
          */
-        $middleware->trustProxies(
-            at: env('TRUSTED_PROXIES', '*') === '*'
-                ? '*'
-                : explode(',', (string) env('TRUSTED_PROXIES')),
-        );
 
         /*
          * Browser hardening on the web group (SEC-OPS-02). The API group is
@@ -104,6 +91,26 @@ return Application::configure(basePath: dirname(__DIR__))
         // Laravel's `auth` middleware looks for a route literally named
         // `login`; every web route here is namespaced `web.*`.
         $middleware->redirectGuestsTo(fn () => route('web.login'));
+    })
+    /*
+     * Shared hosting terminates TLS at the host's proxy and forwards plain HTTP
+     * to PHP (DEPLOYMENT §3A). Without a trusted proxy every url() is built as
+     * http://, `$request->secure()` is false - so HSTS is never sent - and
+     * `SESSION_SECURE_COOKIE` on a request Laravel believes is insecure produces
+     * a cookie the browser then refuses to return, which looks exactly like
+     * "login does nothing".
+     *
+     * Set from config and from HERE, at boot, for one reason: the withMiddleware
+     * closure above runs when the HTTP kernel is RESOLVED, and both .env and
+     * config are loaded afterwards, when the kernel bootstraps. An env() there
+     * always returned its own default, so a pinned TRUSTED_PROXIES was ignored
+     * and the app trusted every proxy - which lets a client set X-Forwarded-For
+     * and therefore choose the IP that rate limits and audit rows are keyed on
+     * (T-30). `booted` is the first point where config exists, and it still runs
+     * before any middleware touches a request.
+     */
+    ->booted(function (): void {
+        TrustProxies::at((string) config('security.trusted_proxies', '*'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         /*

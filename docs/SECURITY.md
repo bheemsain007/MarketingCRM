@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Last updated** | 2026-08-10 (Phase 1) |
-| **Status** | Policy defined; **no controls implemented yet** — implementation begins Phase 3/4 |
+| **Version** | 1.2 |
+| **Last updated** | 2026-08-28 (§8 AI-transcript correction; the rest of this file has not been re-audited control-by-control in this pass — treat other sections as unverified against current code) |
+| **Status** | **Most controls are implemented** — this line described the pre-Phase-3 state ("no controls implemented yet") and had not been revisited since 2026-08-10 despite auth, RBAC, data scoping, audit logging, webhook verification, 2FA, security headers and the DNC gate all having shipped. §8 (PII/data protection) is corrected below; the rest of this document's SEC-* rows were not individually re-verified in this pass. |
 | **Related** | [ARCHITECTURE.md](ARCHITECTURE.md) · [API_DOCUMENTATION.md](API_DOCUMENTATION.md) · [BUSINESS_RULES.md](BUSINESS_RULES.md) |
 
 Controls carry stable IDs (`SEC-*`) so tests and reviews can cite them.
@@ -163,15 +163,30 @@ better home than either `.env` or the database.
 
 ## 8. Data Protection & PII
 
-This system stores substantial personal data: names, phone numbers, emails, **call recordings**, and **AI call transcripts**.
+This system stores substantial personal data: names, phone numbers, emails, and **call recordings**.
+
+> ⚠️ **Corrected 2026-08-28.** This section, and the two SEC-PII rows below that named transcripts,
+> described **AI call transcripts** as a stored data class since this file was written at Phase 1. They
+> are not, and never have been. The string `transcript` does not appear anywhere in `backend/app` — the
+> Vaaad AI-calling webhook (Phase 25, `POST /webhooks/vaaad`) carries a `summary` field only, which is
+> written into the call's `notes` column and kept as the interest signal's `excerpt`; no full transcript
+> is requested, received, or stored. FR-AI-01 (PROJECT_REQUIREMENTS.md) lists transcript and AI score as
+> acceptance criteria, and BUSINESS_RULES.md §"interest signal evidence" mentions a "transcript excerpt"
+> — both describe data this system does not hold, and are a document, not a build, task (out of this
+> lane's scope; DATABASE_SCHEMA §3 carries the same correction for the schema side). **Why this matters
+> as a security document rather than a feature gap**: a retention policy, an encryption control, or a
+> disclosure/DPA answer written for a data class that does not exist is not a harmless overstatement —
+> it is a promise (to an auditor, a customer, or a data-subject request) about protections for data this
+> system was never asked to produce. If a transcript is ever built, this section needs to be revisited
+> from the phase that adds it, not inherited from here.
 
 | ID | Control |
 |----|---------|
 | SEC-PII-01 | TLS enforced in transit; HSTS enabled |
-| SEC-PII-02 | Encryption at rest for recordings and transcripts *(mechanism to confirm — disk-level vs. application-level)* |
-| SEC-PII-03 | Log redaction: phone numbers, emails, message bodies, and transcript content are not written to application logs in full |
+| SEC-PII-02 | Encryption at rest for recordings *(mechanism to confirm — disk-level vs. application-level; T-38)* |
+| SEC-PII-03 | Log redaction: phone numbers, emails, and message bodies are not written to application logs in full |
 | SEC-PII-04 | Data export (CSV) restricted to Manager+ and **audited** — bulk export of a lead database is the highest-value insider-threat action |
-| SEC-PII-05 | Retention policy per data class (recordings, transcripts, webhook payloads, logs); purge jobs are scheduled and audited |
+| SEC-PII-05 | Retention policy per data class (recordings, webhook payloads, logs); purge jobs are scheduled and audited |
 | SEC-PII-06 | Consent/opt-out state is authoritative and honoured across every channel (BR-DNC-01) |
 | SEC-PII-07 | Recording consent/notification requirements are respected per applicable rules and device capability (BR-REC-03) |
 

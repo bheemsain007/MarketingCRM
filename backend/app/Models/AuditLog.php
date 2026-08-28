@@ -53,6 +53,10 @@ class AuditLog extends Model
     protected $fillable = [
         'tenant_id', 'user_id', 'action', 'auditable_type', 'auditable_id',
         'old_values', 'new_values', 'description', 'ip_address', 'user_agent',
+        // Mass-assignable for the same reason `PaymentStatusHistory` allows it:
+        // backdating a row at INSERT time is not a rewrite of a stored one, so
+        // it does not touch what SEC-AUD-01 actually guards against.
+        'created_at',
     ];
 
     /**

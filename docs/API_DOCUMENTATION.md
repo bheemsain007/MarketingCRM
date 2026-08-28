@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 2.0 |
-| **Last updated** | 2026-08-10 (Phase 3) |
-| **Status** | **Foundation implemented and tested.** Envelope, error catalogue, rate limiting, list conventions and `/health` are live. Business endpoints are added by the phase that builds them — this file never describes an endpoint that does not exist. |
+| **Version** | 2.2 |
+| **Last updated** | 2026-08-28 (documentation reconciliation, incl. audit log + DNC skip reporting) |
+| **Status** | **Implemented.** `routes/api_v1.php` registers **151 method+path pairs** (HEAD variants not counted separately); §10A documents all of them. Business endpoints are added by the phase that builds them — this file never describes an endpoint that does not exist. Verify with `php artisan route:list`. |
 | **Related** | [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md) · [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) |
 
 ---
@@ -129,35 +129,105 @@ Responses include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `Retry-After
 
 ## 8. Idempotency
 
-Write endpoints that trigger outbound actions (sends, campaign starts, payments) accept an `Idempotency-Key` header. A repeated key returns the original result rather than acting twice — matching the internal idempotency guarantee ([ARCH §6](ARCHITECTURE.md#6-webhooks--idempotency)).
+> ⚠️ **`Idempotency-Key` is NOT implemented. It is a known gap, not a feature.** Corrected 2026-08-27.
+>
+> This section previously promised that write endpoints triggering outbound actions accept an
+> `Idempotency-Key` header and replay the original result. **Nothing in the backend reads that
+> header** — `grep -r "Idempotency-Key" backend/app backend/routes` returns nothing. A client that
+> retries a `POST /leads/{id}/calls` or `POST /leads/{id}/messages` with the same key **acts twice**.
+
+**This is a live gap, not just a documentation error.** The Flutter offline outbox
+(`mobile/lib/core/offline/outbox_entry.dart`) generates a key once at enqueue time and replays it on
+every retry precisely because this section promised it would be honoured. On a flaky connection the
+outbox will therefore create duplicate calls, notes and messages. Flagged here for a future lane to
+close; **do not** close it by deleting the client header.
+
+**What idempotency the system does have**, and where it stops:
+
+| Guarantee | Mechanism | Covers |
+|-----------|-----------|--------|
+| A retried **send job** never double-sends | `messages.idempotency_key` unique index, **server-generated** (`Str::uuid()` in `OutboundMessageService`) | Queue retries only — not HTTP retries |
+| A replayed **inbound webhook** is absorbed | unique `(provider, provider_event_id)` on `provider_webhook_logs` | Every webhook in §10 |
+| A redelivered **import row job** is a no-op | unique `(lead_import_id, row_number)` | CSV import |
+| A repeated **manual DNC suppression** does not stack | `DncService` | `POST /dnc` |
+
+Note the first row carefully: `messages.idempotency_key` is generated **by the server, per message
+row**, for provider-side correlation. It is not, and never was, wired to a client-supplied header.
 
 ## 9. Long-Running Operations
 
-Bulk actions return `202 Accepted` with a job/batch reference rather than blocking (NFR-06):
+Bulk actions return `202 Accepted` and queue the work rather than blocking (NFR-06). The four are
+`POST /campaigns/{id}/start`, `POST /leads/import`, `POST /leads/export` and
+`POST /leads/{id}/ai-call`.
 
-```json
-{ "success": true, "message": "Campaign queued.",
-  "data": { "campaign_id": 42, "batch_id": "9f3c...", "status_url": "/api/v1/campaigns/42/status" },
-  "errors": [] }
-```
+**There is no `status_url` and no separate status endpoint.** Progress is polled from the resource's
+own `GET` route, which carries the counters:
 
-Progress is polled via the returned status URL.
+| Started by | Poll | Progress fields |
+|------------|------|-----------------|
+| `POST /campaigns/{id}/start` | `GET /campaigns/{id}` | `total_targeted`, `sent`, `delivered`, `failed`, `skipped`; per-recipient detail at `GET /campaigns/{id}/recipients` |
+| `POST /leads/import` | `GET /leads/imports/{id}` | `status`, `progress`, the five row counters; per-row detail at `.../rows` |
+| `POST /leads/export` | `GET /leads/exports` | `status`, then `GET /leads/exports/{id}/download` |
+| `POST /leads/{id}/ai-call` | `GET /leads/{id}/calls` | the outcome arrives by webhook (§10) |
+
+⚠️ **`campaigns.batch_id` is not a Laravel job-batch id.** It is a UUID `CampaignService` generates
+for its own correlation; there is no `Bus::batch()` anywhere in the codebase, so it cannot be handed
+to Laravel's batch API. See [ARCH §4](ARCHITECTURE.md#4-queue--worker-topology). `lead_imports.batch_id`
+is never written at all.
 
 ## 10. Webhook Endpoints (inbound)
 
 Receivers follow the shared pipeline — verify signature → persist raw → dedupe → ACK 200 → process async. They ACK before processing, so a `200` means *received*, not *processed*.
 
-| Path | Source |
-|------|--------|
-| `/api/v1/webhooks/meta` | Facebook/Instagram Lead Ads — **implemented**. `GET` answers the subscription challenge, `POST` receives leadgen deliveries |
-| `/api/v1/webhooks/whatsapp` | WhatsApp Business API |
-| `/api/v1/webhooks/mailercloud` | Mailercloud delivery/open/click/bounce — **implemented**, and a hard bounce or unsubscribe now suppresses (path is provider-named, not `/email`) |
-| `/api/v1/webhooks/sms` | BhashSMS delivery reports — **not implemented**: sending is live, but their DLR callback contract is undocumented (T-53), so SMS status stops at `sent` |
-| `/api/v1/webhooks/rcs` | RCS provider *(TBD)* |
-| `/api/v1/webhooks/voice` | Voice provider *(TBD)* |
-| `/api/v1/webhooks/ai-calling` | Vaaad call status/transcript/summary |
+> **Corrected 2026-08-27.** Five of the seven paths this table previously listed
+> (`/webhooks/whatsapp`, `/sms`, `/rcs`, `/voice`, `/ai-calling`) **were never registered**. An
+> operator who pasted them into a provider dashboard was pointing that provider at a 404 — a silent
+> loss of every delivery receipt and every opt-out. The table below is the registered set; it is
+> derived from `php artisan route:list --path=webhooks` and is the only list to configure from.
 
-Webhook routes are exempt from session CSRF but **require provider signature verification** (SEC control).
+**These seven paths are the whole set.** Non-email delivery status is *channel-generic*: one endpoint
+takes SMS, WhatsApp, RCS and Voice, with the channel named in the body. That is deliberate — three of
+the four vendors are still unchosen (T-31/T-32/T-33), and four vendor-specific paths would be four
+guesses at payloads nobody has seen, each needing a re-configured dashboard when the guess proved
+wrong.
+
+| Method | Path | Source | Auth |
+|--------|------|--------|------|
+| GET | `/api/v1/webhooks/meta` | Facebook/Instagram Lead Ads subscription challenge — echoes `hub_challenge` as bare text | `hub_verify_token` query param |
+| POST | `/api/v1/webhooks/meta` | Facebook/Instagram leadgen deliveries (FR-META-01..03) | `X-Hub-Signature-256`, HMAC-SHA256 over the **raw** body |
+| POST | `/api/v1/webhooks/mailercloud` | **Email** delivery / open / click / bounce. A hard bounce or unsubscribe suppresses (BR-DNC-07) | `X-Webhook-Token` header (or `token` in body) vs `providers.mailercloud.webhook_secret` |
+| GET | `/api/v1/webhooks/whatsapp` | WhatsApp Cloud API subscription challenge — same `hub.*` handshake as Meta lead ads | `hub_verify_token` vs `providers.whatsapp.webhook_verify_token` |
+| POST | `/api/v1/webhooks/whatsapp` | **WhatsApp Cloud API** delivery/read receipts, in Meta's own native shape (distinct from the generic `/webhooks/delivery` below — see note) | `X-Hub-Signature-256` vs `providers.whatsapp.app_secret` |
+| POST | `/api/v1/webhooks/delivery` | **Delivery status for SMS, RCS and Voice** (FR-COMM-03). Channel in the body as `channel`; correlates on `custom_id` (our key) then `message_id` (the provider's). Drives `delivered` / `read` / `failed` / `bounced` | `X-Webhook-Token` vs `providers.delivery.webhook_secret` |
+| POST | `/api/v1/webhooks/inbound` | **Inbound keyword opt-out** (BR-DNC-05/07). A lead replying STOP is suppressed, scoped to the reply channel. Fields: `channel`, `from`/`phone`, `text`/`body`, `message_id` | `X-Webhook-Token` vs `providers.inbound.webhook_secret` |
+| POST | `/api/v1/webhooks/vaaad` | **Vaaad AI-call result** (Phase 25) — outcome, duration and an optional interest confidence. *(This is the endpoint the old table called `/webhooks/ai-calling`.)* | `X-Webhook-Token` vs `providers.vaaad.webhook_secret` |
+| POST | `/api/v1/webhooks/payment` | **Gateway collection** (Phase 23, FR-PAY-02) — payment link paid / failed / refunded. Gateway-agnostic path; the configured gateway chooses the header | Razorpay: `X-Razorpay-Signature`, hex HMAC-SHA256 of the raw body |
+
+Every receiver follows the same pipeline: log the raw delivery → verify → dedupe on
+`(provider, provider_event_id)` → ACK → act. A `200` means *received*, not *processed*.
+
+**A missing or empty secret means the endpoint is out of service, not open.** An unconfigured
+receiver refuses everything with `401` rather than accepting unsigned traffic.
+
+**`401` vs `200` is deliberate.** A bad signature returns `401` so a provider retries a merely
+misconfigured secret; an unmatched message, an unknown channel or an unrecognised event returns `200`
+with no action, so a provider does not retry forever something we can never act on. The reason is
+recorded on the `provider_webhook_logs` row either way.
+
+Webhook routes are exempt from session CSRF, carry `throttle:api-webhook` (600/min), and **nothing in
+a payload may create a record** (SEC-WH-05).
+
+**Two inbound gaps worth naming**, both real and neither a documentation error:
+
+- **Neither webhook stores a conversation.** `/webhooks/whatsapp` logs an inbound WhatsApp message
+  with `processing_error: 'Inbound replies are not implemented (FR-WA-01)'` and takes no other
+  action — no `messages` row, no reply visible anywhere in the CRM. `/webhooks/inbound` (above) is
+  narrower still: it acts *only* on an opt-out keyword and drops everything else. Inbound conversation
+  is not a feature the system has, on either path. See MODULE_STATUS Phase 14.
+- **WhatsApp template messages are not sent.** `WhatsAppDriver::send()` always posts
+  `type: "text"` — there is no `type: "template"` request with named components, so anything sent
+  outside Meta's 24-hour customer-service window (an approved-template-only rule on Meta's side) is
+  rejected by the Cloud API, not by this system.
 
 ## 10A. Implemented Endpoints
 
@@ -180,6 +250,28 @@ Returns `503` when a dependency is down, so a monitor records an outage rather t
 }
 ```
 
+### `GET /api/v1/health/scheduler`
+
+Scheduler liveness on its own endpoint, **unauthenticated** for the same reason as `/health`. Point
+the uptime monitor here — **not** at `/up/scheduler`, which does not exist.
+
+`crm:scheduler-heartbeat` writes a cache timestamp every minute; this reads it back. A dead cron is a
+silent outage — nothing errors, retention purges and follow-up reminders simply stop — so absence is
+made the alarm.
+
+Returns **`503`** with `status: "stale"` once the last beat is older than
+`SchedulerHeartbeatCommand::STALE_AFTER_MINUTES`, so a monitor records an outage rather than a
+success carrying bad news.
+
+```json
+{
+  "success": true,
+  "message": "Scheduler is running.",
+  "data": { "status": "ok", "last_run_at": "2026-08-27T04:20:00+00:00", "stale_after_minutes": 5 },
+  "errors": []
+}
+```
+
 ### Authentication (Phase 4)
 
 | Method | Path | Auth | Permission | Notes |
@@ -189,6 +281,18 @@ Returns `503` when a dependency is down, so a monitor records an outage rather t
 | POST | `/api/v1/auth/logout` | Bearer | — | Revokes **only** the presenting token |
 | POST | `/api/v1/auth/logout-all` | Bearer | — | Revokes every token |
 | POST | `/api/v1/auth/change-password` | Bearer | — | Signs out other devices |
+| DELETE | `/api/v1/users/{id}/two-factor` | Bearer | **`roles.manage`** | Break-glass 2FA reset — see below |
+
+**2FA enrolment and the login challenge are browser routes, not API routes** (SEC-AUTH-07, T-09).
+`/two-factor-challenge`, `/account/two-factor` and its confirm / regenerate / disable actions live in
+`routes/web.php` and are session-authenticated. The API surface of 2FA is the single reset endpoint
+above.
+
+`DELETE /users/{id}/two-factor` is the break-glass path for an administrator who has lost both their
+device and their printed recovery codes — otherwise they are locked out permanently, because the
+password-reset flow sets a password and the challenge still stands behind it. **Two gates, not one**:
+`roles.manage` on the route, and `TwoFactorService::resetFor()` re-checks Super Admin on the model
+and refuses self-service. Both users are audited. Returns `{ "user_id": n, "two_factor_enabled": false }`.
 
 **Login** — `{ "email": "...", "password": "...", "source": "web|android" }`
 
@@ -211,6 +315,34 @@ Login also **opens a work session** (FR-ATT-01) — attendance tracking cannot b
 `permissions` and `data_scope` are returned so the client can hide controls it cannot use. That is a **usability aid only** — the server re-checks on every request (SEC-AUTHZ-02).
 
 **Failure modes:** invalid credentials → `401 auth.unauthenticated` with an *identical* message whether or not the account exists (no user-enumeration oracle). Disabled account → `403`.
+
+### Attendance (FR-ATT-02, FR-ATT-04)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| POST | `/api/v1/attendance/ping` | *(own session)* | Presence heartbeat — writes a `page_view` activity ping |
+| POST | `/api/v1/attendance/breaks/start` | *(own session)* | Returns `work_session_id`, `break_started_at` |
+| POST | `/api/v1/attendance/breaks/stop` | *(own session)* | Returns `work_session_id`, `break_seconds` |
+
+**The work session itself is opened by login and closed by logout** (FR-ATT-01). These three act on
+the *caller's own* currently open session and nothing else.
+
+**No permission gate, deliberately.** There is no "someone else's attendance" for a permission to
+scope, unlike leads — where the permission answers "may they touch leads?" and the policy answers
+"may they touch *this* one". Normal authentication is the whole gate.
+
+**`ping` exists for the gap between actions.** Active time is derived from `user_activity_pings`, and
+a telecaller reading a long lead history generates no call, note or status change to hang a ping on.
+Without a heartbeat that reads as idle.
+
+**Failure modes are `422`, not silent.** Starting a break with no open session, starting a second
+break on top of a running one, or stopping one that never started each return
+`422 validation.failed` with a message — a break whose start time was silently discarded would
+under-report someone's hours, and these numbers feed pay.
+
+⚠️ **No client calls these yet.** Neither the Web CRM nor the Flutter app sends the heartbeat or the
+break signals, so `break_seconds` is `0` everywhere and active-time rollup has only action-derived
+pings to work from. The endpoints are built and tested; nothing drives them.
 
 ### Products (Phase 5)
 
@@ -250,6 +382,9 @@ A duplicate `code` returns `409 resource.conflict` with `data.existing_product_i
 | GET | `/api/v1/leads/imports` | `leads.import` | Own uploads; all uploads at `All` scope |
 | GET | `/api/v1/leads/imports/{id}` | `leads.import` | Progress + counts — poll this |
 | GET | `/api/v1/leads/imports/{id}/rows` | `leads.import` | Per-row report; `?filter[status]=invalid` |
+| POST | `/api/v1/leads/export` | `leads.export` | **`202`**; queues a CSV of the caller's current view; bulk rate limiter |
+| GET | `/api/v1/leads/exports` | `leads.export` | Own runs; all runs at `All` scope |
+| GET | `/api/v1/leads/exports/{id}/download` | `leads.export` | Streams the file |
 
 Filters: `status`, `temperature`, `priority`, `assigned_to`, `lead_source_id`, `campaign_id`, `city`, `state`, `is_suppressed`, `created_at`, `last_contacted_at`.
 Sorts: `created_at`, `updated_at`, `name`, `priority`, `score`, `last_contacted_at`, `last_engagement_at`.
@@ -301,6 +436,41 @@ Importable fields: `name`, `phone`, `alt_phone`, `email`, `company`, `city`, `st
 
 `.xlsx` is **not** accepted — it needs a spreadsheet library that is not yet a dependency (T-45). Save as CSV.
 
+#### Bulk export (FR-LEAD-12, SEC-PII-04)
+
+`POST /api/v1/leads/export` takes the **same filter shape as `GET /leads`**, so an export always
+matches what the requester was looking at on screen:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `filter[...]` | object | Same fields as the lead list |
+| `q` | string | Free-text search, max 190 |
+| `with_archived` | bool | |
+
+`sort` and `include` are **not** accepted — row order and eager loading do not change which rows
+leave the building, and carrying them would widen the surface for no gain.
+
+**`202`, not `200`**, and the bulk rate limiter: the request kicks off a query over the requester's
+whole visible lead set, not a single-row read. Poll `GET /leads/exports` for `status`, then download.
+
+**All three routes are audited without any code in the controller.** `leads.export` is in
+`Permission::isAudited()`, so `EnsurePermission` writes the entry before the controller runs — for
+the request, the list read *and* every download (SEC-AUD-02). Bulk export of a lead database is the
+highest-value insider action in the system, so "who downloaded it, and when" is recorded structurally
+rather than by remembering to log it.
+
+**Scope is applied to the list too**, not just to the rows: below `All` scope a requester sees only
+their own runs, mirroring `LeadExportPolicy` — a list that showed what the record endpoint would
+refuse is a leak of its own (SEC-AUTHZ-03).
+
+**Download refuses with `404`, not `403`, for every reason the bytes are not servable** — not
+finished, failed, expired, or the file already purged. Only the ownership check is a `403`, because
+that is the single case where the export exists and simply is not this caller's to read.
+
+**Files expire and are then deleted.** `expires_at` (default 7 days,
+`crm.exports.retention_days`) stops the download; `leads:purge-export-files` on the scheduler is what
+actually removes the bytes. The record survives the purge — the same split as import (SEC-PII-05).
+
 ### Lead Status & Product Interest (Phase 7)
 
 | Method | Path | Permission | Notes |
@@ -319,7 +489,7 @@ Importable fields: `name`, `phone`, `alt_phone`, `email`, `company`, `city`, `st
 
 **An illegal transition returns `422 lead.invalid_status_transition` with the legal moves attached** in `data.allowed`, plus `data.is_terminal`. A client can correct itself rather than guessing. Setting the status a lead already has is also a `422` — the matrix's diagonal is empty.
 
-**`Converted` cannot be set directly.** It requires a sale with a non-failed payment (BR-STAT-05, BR-PAY-05), which arrives in Phase 22. Until then it returns `422` with `data.requires = "sale_with_payment"`, and it never appears in `/transitions`. This is stricter than the matrix on purpose: `Converted` is terminal and drives revenue reporting and telecaller pay, so a wrong one cannot be walked back.
+**`Converted` cannot be set directly.** It requires a sale (Phase 22) **and** a `partial`/`paid` payment against it (Phase 23) — BR-STAT-05, BR-PAY-05. Both are built. Without them it returns `422` with `data.requires` set to `"sale"` or `"payment"`, and it does not appear in `/transitions`. This is stricter than the matrix on purpose: `Converted` is terminal and drives revenue reporting and telecaller pay, so a wrong one cannot be walked back.
 
 **Reopens (from `Lost` or `Not Interested`) need `leads.reopen` *and* a written reason.** Without the permission a telecaller could recycle their own dead leads to flatter their numbers; without the reason, the audit records that it happened but not why — and "why" is the whole question when a reopened lead later converts. **Reopening does not clear suppression** (BR-DNC-06): un-suppressing is a separate, separately-audited action.
 
@@ -338,6 +508,11 @@ Product routes are **scope-bound**: `/leads/5/products/9` where interest 9 belon
 | POST | `/api/v1/leads/{id}/calls` | `calls.create` | **`202`** dial intent, or **`201`** if `status` is sent |
 | PATCH | `/api/v1/calls/{id}` | `calls.create` | Report the outcome |
 | GET | `/api/v1/calls` | `calls.view` | Cross-lead history, scoped to the caller |
+| POST | `/api/v1/leads/{id}/ai-call` | `calls.create` | **`202`** — dial through Vaaad (Phase 24) |
+| POST | `/api/v1/calls/{id}/recording` | `calls.create` | Upload; `multipart/form-data` |
+| GET | `/api/v1/calls/{id}/recording` | `recordings.listen` | Metadata + a signed playback URL |
+| GET | `/api/v1/calls/{id}/recording/audio` | `recordings.listen` | **Signed route** — streams the audio |
+| DELETE | `/api/v1/calls/{id}/recording` | `recordings.delete` | Deletes the audio, keeps the row |
 
 **The Web CRM orchestrates; the device dials** (ADR-B). `POST /leads/{id}/calls` with no `status` creates the record and the dial intent and returns **`202`** — the call has no outcome yet, and `status` is `null` until the handset reports back. Sending a `status` logs a call that already happened and returns `201`.
 
@@ -359,6 +534,78 @@ Product routes are **scope-bound**: `/leads/5/products/9` where interest 9 belon
 - Any outcome → `last_contacted_at` updated, feeding the leakage metric (GLOSSARY §2.9).
 
 `GET /leads/{id}/callability` returns `{callable, reason, message, next_opening}` so a UI can grey out the call button **with the reason attached**, rather than letting a telecaller discover the refusal by being refused.
+
+#### AI calling (Phase 24, FR-AI-01)
+
+`POST /api/v1/leads/{id}/ai-call` places an automated call through Vaaad. Optional body: `script`,
+`product_id`. Returns **`202`** with the call record — the outcome is not known yet and arrives on
+`POST /webhooks/vaaad`.
+
+**The same gate as a human dial**, run by the same `CallService`: DNC on the `ai_call` channel, and
+calling hours in the *lead's* timezone. The gate runs **before** the provider request, so a
+suppressed lead never leaves an orphaned call sitting at Vaaad.
+
+**Same permission as a human dial** (`calls.create`) plus `LeadPolicy`. An automated call is still a
+call to that person.
+
+**Unkeyed it refuses rather than half-works.** With no Vaaad credential the endpoint returns
+`503 provider.unavailable` with a clear "not configured" message. Add the key in Settings and it
+starts dialling with no deploy (SEC-CFG-04).
+
+Records a call with `dial_source = 'ai'` and the Vaaad id in `external_call_id`. The wire format is
+provisional until the account is live (T-35).
+
+⚠️ **No transcript is stored, and there is no AI score field.** The webhook carries a `summary`,
+which is written to the call's `notes` and kept as the interest signal's `excerpt`. FR-AI-01 lists
+transcript and AI score as acceptance criteria; neither is built. See SECURITY §8.
+
+#### Call recordings (Phase 11, FR-REC-02..05, BR-REC-01/02/03)
+
+Upload body (`multipart/form-data`): `file` (required), `duration_seconds`, `device_captured_at`.
+The file is validated by **extension allowlist** (`mp3, m4a, aac, amr, ogg, opus, wav, 3gp`) and size
+cap (`crm.recordings.max_file_kb`), not by MIME — handsets label the same AMR as `audio/*`,
+`application/octet-stream` or nothing at all depending on the OS, so a MIME allowlist would reject
+valid uploads while proving little. The control that matters is structural: stored under a generated
+name on a **private disk with no URL**, outside the web root, only ever streamed back through an
+authorised route (SEC-FILE-01/02).
+
+**Upload is gated as the call's *outcome* is** (`calls.create` + `recordOutcome` policy) — the device
+posts as the telecaller who made the call. Attaching audio to a colleague's call would be putting
+evidence on a record you do not own.
+
+**Write-once, but a retry is recognised rather than refused.** A device unsure whether its upload
+landed is matched by checksum (FR-REC-02).
+
+**Playback is signed *and* authenticated, and both are needed.** `audio_url` is a
+`temporarySignedRoute` valid for `crm.recordings.signed_url_minutes` (10), so a URL copied out of a
+network tab or a proxy log is worthless minutes later; the permission and policy make it worthless to
+anyone else even before then. Neither alone is what BR-REC-01 asks for.
+
+**Access is audited with no code in the controller.** `recordings.listen` is in
+`Permission::isAudited()`, so the access record is written by the middleware before either read runs
+(SEC-FILE-04).
+
+**Deleting is its own permission and its own audit entry.** Being trusted to listen is not being
+trusted to destroy (SEC-PII-05). The **row survives** with its path nulled and `upload_status` set to
+`purged`, so "there was a recording and it was deleted on this date" stays distinguishable from
+"there never was one" — which is exactly what a retention question asks (BR-REC-02).
+
+**Three different "no audio" histories, reported separately**, because a client showing all three as
+"no recording" would be hiding two of them:
+
+| Field | Means |
+|-------|-------|
+| `is_unavailable` | The OS blocked capture. **Not an error** (BR-REC-03) — on most modern Android handsets this is the normal case (T-44) |
+| `is_purged` | Deleted on retention or by hand (BR-REC-02) |
+| `is_playable` false, neither flag | Still uploading, or the upload failed — see `failure_reason` |
+
+`GET .../recording` on a call that never had one is a `404`; absence is expected, not a fault.
+`expires_at` is surfaced so a UI can warn before the audio disappears.
+`crm:purge-recordings` on the scheduler is what deletes expired audio.
+
+⚠️ **The device half (FR-REC-01, Phases 31/32) is not built** and is blocked on T-44. Nothing
+currently uploads a recording. Also unresolved: BR-REC-01 says the owning telecaller may listen to
+their own call, but `recordings.listen` is seeded to Manager+ only — T-66.
 
 ### Auto dialer (Phase 10)
 
@@ -417,6 +664,8 @@ Filters: `?q=` (name or email), `?role=`, `filter[is_active]`, `filter[team_id]`
 | GET | `/api/v1/reports/pipeline` | `reports.business` |
 | GET | `/api/v1/reports/products` | `reports.business` |
 | GET | `/api/v1/reports/sources` | `reports.business` |
+| GET | `/api/v1/reports/campaigns` | `reports.business` |
+| GET | `/api/v1/reports/telecallers` | **`reports.telecaller`** |
 
 All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this month, not all time** — an unbounded aggregate over a growing table is the query that takes the dashboard down.
 
@@ -437,7 +686,26 @@ All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this m
 
 **Not data-scoped**, by design — this is the organisation-wide view, so it is gated on `reports.business` (Manager+) rather than filtered to the caller's own leads.
 
-**Absent**: telecaller performance (FR-RPT-01, needs T-24), campaign performance (needs Phase 18), Chart.js dashboards (FR-RPT-03, T-60).
+**`/reports/telecallers` is gated on its own permission** (FR-RPT-01). `reports.business` is money;
+`reports.telecaller` is people. They are not the same audience, and Accounts holds the first without
+the second. The response **states which attribution model produced it** — `last_owner` by default,
+switchable to first-interest in `crm.reporting`; an unrecognised value falls back rather than zeroing
+everyone. That default is a default, **not a sign-off**: it decides who gets conversion credit, and
+therefore pay (T-24).
+
+**`/reports/campaigns` and `/reports/telecallers` are never mixed into one number** (T-25). Campaign
+performance is marketing ROI — reach, delivery, failure and skip rates per campaign, each with its
+denominator; delivery is over messages *sent*, skip over the audience *targeted*. Telecaller
+performance is incentives.
+
+**Fully-past periods are served from `report_daily_aggregates`**, written nightly by
+`crm:aggregate-daily-reports` (FR-RPT-05). A period that includes today falls back to the live query.
+Without the scheduler entry those rows are never written and every request is a live scan.
+
+> **Corrected 2026-08-27.** This section previously ended with "**Absent**: telecaller performance,
+> campaign performance, Chart.js dashboards". All three shipped: telecaller performance on
+> 2026-08-12 (Phase 26), campaign performance on 2026-08-12, and the Chart.js dashboards on
+> 2026-08-11 (T-60, `/reports` and `/reports/telecallers`).
 
 ### Interest engine (Phase 20)
 
@@ -467,13 +735,14 @@ All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this m
 
 `crm:decay-lead-scores` runs daily — decay is the absence of events, so nothing else triggers it.
 
-### Payments (Phase 23 — offline half)
+### Payments (Phase 23 — offline recording **and** gateway collection)
 
 | Method | Path | Permission | Notes |
 |--------|------|-----------|-------|
 | GET | `/api/v1/payments` | `payments.view` | Scoped through the lead |
 | GET | `/api/v1/sales/{id}/payments` | `payments.view` | Includes the derived balance |
-| POST | `/api/v1/sales/{id}/payments` | `payments.manage` | |
+| POST | `/api/v1/sales/{id}/payments` | `payments.manage` | Record money already received |
+| POST | `/api/v1/sales/{id}/payment-link` | `payments.manage` | Issue a gateway payment link (FR-PAY-02) |
 | PATCH | `/api/v1/payments/{id}` | `payments.manage` (+ `payments.refund` for a refund) | |
 
 **Lead, customer and sale are taken from the sale, not the request.** A body naming its own `customer_id` is ignored — a request that could choose the account is one that can attach money to the wrong one (BR-PAY-03).
@@ -490,7 +759,40 @@ All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this m
 
 **This closes the `Converted` gate.** A lead converts only when a sale has a `partial` or `paid` payment (BR-PAY-05); until then the status endpoint returns `data.requires = "payment"`.
 
-**Not implemented**: payment links and gateway collection (FR-PAY-02) — needs the gateway named (T-34, T-59).
+#### Payment links and gateway collection (FR-PAY-02)
+
+> **Corrected 2026-08-27.** This section previously said "**Not implemented**: payment links and
+> gateway collection — needs the gateway named (T-34, T-59)". Both shipped on 2026-08-13, and T-34
+> was answered: **Razorpay** is the implemented gateway, behind a `PaymentGateway` contract so a
+> second one is another driver class.
+
+`POST /api/v1/sales/{id}/payment-link` body — all four optional:
+
+| Field | Notes |
+|-------|-------|
+| `amount` | Omitted means **the whole outstanding balance**, derived rather than supplied (BR-PAY-04) |
+| `product_id` | As for a manual payment (T-58) |
+| `description` | Max 255 |
+| `expires_at` | Must be in the future |
+
+Returns `201` with the link's `url`, `gateway`, `amount`, `currency`, `expires_at`, the created
+`payment` and the sale's recomputed `balance`.
+
+**Carries `payments.manage`, the same gate as recording money by hand.** Issuing a link is *asking* a
+customer to pay, not collecting from them.
+
+**A link settles nothing.** The payment it creates is **always `pending`** and is returned that way
+so the caller can see that issuing a link collected no money. It becomes `paid` only when
+`POST /webhooks/payment` arrives with a verified gateway signature — the same one-way rule as every
+other status in the BR-PAY-02 matrix.
+
+**`expires_at` is passed to the gateway, not just stored.** A link that never expires is a payable
+URL loose in somebody's inbox for ever.
+
+**The webhook path is gateway-agnostic** (`/webhooks/payment`, not `/webhooks/razorpay`), so pointing
+a second gateway's dashboard at it later does not mean re-configuring a URL. Razorpay's own scheme —
+hex HMAC-SHA256 of the raw body under `X-Razorpay-Signature` — is the one webhook signature in this
+system that is **documented rather than provisional**.
 
 ### Sales (Phase 22)
 
@@ -517,7 +819,7 @@ All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this m
 
 **`POST /opportunities/{id}/sale` is the only thing that creates a Customer** (BR-CUST-01). The lead is not converted in place — it survives, and the customer links back via `origin_lead_id`. Customers are deduplicated on phone then email (BR-CUST-04). `sold_by` is fixed at the moment of sale so reassignment does not move the credit.
 
-**This is what unblocks `Converted`.** `PATCH /leads/{id}/status` to `converted` returns `422 lead.invalid_status_transition` with `data.requires = "sale"` until a sale exists. ⚠️ The payment half of BR-PAY-05 is **not yet enforced** — see T-57.
+**This is what unblocks `Converted`.** `PATCH /leads/{id}/status` to `converted` returns `422 lead.invalid_status_transition` with `data.requires = "sale"` until a sale exists — and then `data.requires = "payment"` until that sale carries a `partial` or `paid` payment. **Both halves of BR-PAY-05 are enforced**, as the Payments section above states; T-57 closed on 2026-08-11 with Phase 23. *(This line previously claimed the payment half was unenforced, contradicting the Payments section 29 lines earlier. Corrected 2026-08-27.)*
 
 ### Follow-ups and notifications (Phase 21)
 
@@ -546,20 +848,52 @@ All accept `?from=YYYY-MM-DD&to=YYYY-MM-DD` (FR-RPT-04). **The default is this m
 
 **Notifications are never DNC-filtered.** Suppression protects leads; these target staff.
 
-### Messaging (Phases 13 + 15 — Email and SMS live; other channels are additional drivers)
+### Messaging (Phases 13–17 — all five channels built)
 
 | Method | Path | Permission | Notes |
 |--------|------|-----------|-------|
 | GET | `/api/v1/messages` | `leads.view` | Cross-lead history, scoped |
 | GET | `/api/v1/leads/{id}/messages` | `leads.view` | One lead's history |
 | POST | `/api/v1/leads/{id}/messages` | `messages.send` | `202` — always queued |
-| POST | `/api/v1/webhooks/mailercloud` | *(shared secret)* | Delivery status; hard bounce and unsubscribe suppress (BR-DNC-07) |
+| POST | `/api/v1/webhooks/mailercloud` | *(shared secret)* | **Email** status; hard bounce and unsubscribe suppress (BR-DNC-07) |
+| POST | `/api/v1/webhooks/whatsapp` | *(signature)* | **WhatsApp** status, Meta's own native shape |
+| POST | `/api/v1/webhooks/delivery` | *(shared secret)* | **SMS / RCS / Voice** status, channel in the body |
 
 Filters: `channel`, `status`, `direction`, `campaign_id` (and `lead_id` on the cross-lead route). Sorts: `created_at`, `sent_at`. Includes: `template`, `user`.
 
 **Send body**: `channel` (required), then either `body` (+ `subject`, email only) or `template_id`. Sending a `subject` on a non-email channel is a `422` rather than a silent discard.
 
-**Live channels**: `email` (Mailercloud), `sms` (BhashSMS). Everything else resolves to the log driver until its phase lands.
+**All five message channels have a real driver** — `email` (Mailercloud, Phase 13), `sms` (BhashSMS,
+Phase 15), `whatsapp` (Meta Cloud API, Phase 14), `rcs` (Phase 16), `voice` (Phase 17). Each falls
+back to the log driver **only when its credentials are absent**, which is a configuration state, not
+a missing phase. *(This line previously read "Live channels: email, sms. Everything else resolves to
+the log driver until its phase lands" — the other three phases landed on 2026-08-12. Corrected
+2026-08-27.)*
+
+⚠️ **WhatsApp sends free-form text only, never a Meta template message.** `WhatsAppDriver::send()`
+always posts `type: "text"`; there is no `type: "template"` request with named components. Meta only
+accepts free-form text inside the 24-hour customer-service window that opens when the lead last
+messaged in; outside it, only an approved template is deliverable, and this driver cannot send one —
+`WhatsAppDriver` reports it as an ordinary `4xx` rejection (the same path as any other Cloud API
+refusal), not a distinct error. FR-WA-01 names template messages as an acceptance criterion; that
+half is not built. See MODULE_STATUS Phase 14.
+
+`voice` here is the outbound **message** channel — an automated TTS announcement. It is **not** the
+interactive dialling of `Channel::Call` / `Channel::AiCall`, which `Channel::isVoiceCall()`
+deliberately excludes and which never reaches the message pipeline.
+
+**Delivery status is implemented for every channel, on two different receivers.** Email reports on
+`/webhooks/mailercloud`; WhatsApp reports on its own `/webhooks/whatsapp` in Meta's native shape (the
+generic body every other channel uses cannot be produced by Meta's dashboard); SMS, RCS and Voice
+report on the channel-generic `/webhooks/delivery`. All routes into the same
+`delivered`/`read`/`failed`/`bounced` transitions through `DeliveryStatusService`. *(This file
+previously said SMS delivery status was not implemented and that "SMS status stops at `sent`". False
+since the generic receiver was built. Corrected 2026-08-27.)*
+
+**Status only moves forwards.** `queued → sent → delivered → read → replied` is ranked, so a
+late-arriving `delivered` cannot demote a message that has already been read — providers do deliver
+these out of order, and the naive version quietly understates engagement in every report that counts
+reads. `read` is real for WhatsApp and RCS; SMS and Voice will never send one.
 
 **Always `202`, never `200`.** Nothing sends inline in an HTTP request whatever its size (FR-COMM-01) — a provider timeout must not become the user's timeout.
 
@@ -574,6 +908,153 @@ Filters: `channel`, `status`, `direction`, `campaign_id` (and `lead_id` on the c
 **A bounce is only suppressed when it is confirmed hard.** `hard_bounce`, or `bounce`/`bounced` carrying a `bounce_type`/`type` of hard or permanent. An unqualified bounce is recorded and the address stays contactable — a full mailbox is temporary, and lifting a suppression needs Manager+ (BR-DNC-06), so the failure that costs less is the one to prefer. The message's `failure_reason` says which of the two happened.
 
 **Message status vocabulary**: `queued` · `sent` · `delivered` · `read` · `replied` · `failed` · `bounced` · `skipped`. `bounced` is distinct from `failed` — the first means the provider took it and the address rejected it, the second means we could not hand it over.
+
+### Message templates (FR-COMM-02)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/templates` | `templates.view` | `?q=` name or code; `?with_inactive=1` |
+| GET | `/api/v1/templates/{id}` | `templates.view` | |
+| GET | `/api/v1/templates/{id}/preview` | `templates.view` | `lead_id` required — renders against a real lead |
+| POST | `/api/v1/templates` | `templates.manage` | |
+| PATCH | `/api/v1/templates/{id}` | `templates.manage` | |
+| DELETE | `/api/v1/templates/{id}` | `templates.manage` | **Deactivates**, never destroys |
+| POST | `/api/v1/templates/{id}/restore` | `templates.manage` | |
+
+Filters: `channel`, `is_active`, `approval_status`, `provider`. Sorts: `name`, `code`, `channel`,
+`created_at`, `updated_at`. Default order is channel then name — the shape a template picker wants,
+since the caller has already chosen a channel by then.
+
+**Body**: `name` (required), `channel` (required), `body` (required, max 100,000), plus optional
+`code` (uppercase `A-Z0-9_`; derived from the name when omitted), `subject`, `variables[]`,
+`media[]`, `provider`, `provider_template_id`, `is_active`.
+
+**Two permissions, and the split matters.** `templates.view` is held by every telecaller because they
+pick a template every time they send; `templates.manage` is the authority to change what the
+organisation says in its own name to thousands of people at once. **Authoring is not sending.**
+
+**`approval_status` and `rejection_reason` are `prohibited`, not ignored.** Approval is *derived* from
+the channel — local channels are approved on save, WhatsApp and RCS approval is the provider's to
+give. A caller who tried to set it has a wrong mental model, and silently dropping the field would
+leave them holding it (T-31).
+
+**DELETE deactivates, and does not soft-delete either.** Sent messages and campaigns hold
+`template_id` and read the template's name back through the relation, which a soft delete would
+resolve to `null` — the history of what was sent would lose the name of what was sent. Retired
+templates are hidden from the list by default (that hiding *is* the whole effect of retiring one),
+but an explicit `filter[is_active]=0` still wins, or the only way to find one in order to restore it
+would return nothing.
+
+**`preview` renders through the send path's own renderer**, not a second one — what it shows is what
+`OutboundMessageService` would produce, token for token, including the fact that `{{ 2+2 }}` stays
+`{{ 2+2 }}`. A preview with its own rendering logic is worse than none: it can agree with the
+operator and disagree with the thing that actually sends (SEC-IN-06). It also returns `recipient` —
+the address this channel would really use — so "this lead has no email on record" is visible before
+the send rather than as a `422` after it.
+
+**`preview` is the one route here that runs `LeadPolicy`.** A render pulls the lead's name, company
+and city into the response, so previewing against a colleague's lead is a PII read — and
+`templates.view` is deliberately broad enough that everyone holds it (SEC-AUTHZ-04). Every other
+template route has no record-level check, because a template belongs to the organisation rather than
+to a lead or a user; there is no "someone else's template" to ask about.
+
+### Campaigns (Phase 18, FR-CAMP-01..05)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/campaigns` | `campaigns.view` | |
+| GET | `/api/v1/campaigns/{id}` | `campaigns.view` | Includes the counters |
+| GET | `/api/v1/campaigns/{id}/recipients` | `campaigns.view` | Per-recipient outcomes |
+| GET | `/api/v1/campaigns/{id}/preview` | `campaigns.manage` + **bulk limiter** | Audience size and eligibility, sends nothing |
+| POST | `/api/v1/campaigns` | `campaigns.manage` | |
+| PATCH | `/api/v1/campaigns/{id}` | `campaigns.manage` | Refused while running |
+| POST | `/api/v1/campaigns/{id}/clone` | `campaigns.manage` | `201` — a new draft |
+| POST | `/api/v1/campaigns/{id}/start` | **`campaigns.run`** + **bulk limiter** | **`202`** |
+| POST | `/api/v1/campaigns/{id}/pause` | `campaigns.run` | |
+| POST | `/api/v1/campaigns/{id}/stop` | `campaigns.run` | **Terminal** |
+
+Filters: `status`, `channel`, `product_id`. Sorts: `created_at`, `scheduled_at`, `started_at`, `name`.
+Includes: `template`. Recipients filter on `status` and `skip_reason`, sort on `processed_at`,
+`created_at`, include `lead` and `message`.
+
+**Body**: `name` (required), `channel` (required), plus optional `description`, `template_id`,
+`product_id`, `scheduled_at` (future only), and `audience_filters` — a **closed set**: `status[]`,
+`temperature[]`, `source[]`, `city[]`, `assigned_to[]`, `product_id[]`. Anything more general would be
+an arbitrary query over the lead table exposed to operator input.
+
+**Calling channels are refused.** `call` and `ai_call` are not valid campaign channels: a "campaign"
+that dials people is the auto dialer, which has consent, calling-hours and single-assignment rules
+(BR-CALL-02/03/04) that a bulk send knows nothing about.
+
+**Three permissions, deliberately separate.** `campaigns.view` reads reports, `campaigns.manage`
+builds and edits, `campaigns.run` presses send. Building a campaign and being allowed to send it to
+twelve thousand people are not the same authority.
+
+**`start` is `202` and returns immediately.** One call materialises an audience of unbounded size and
+enqueues a job per targeted lead (FR-CAMP-05). It carries the **bulk** limiter on top of the standard
+one — at 120/min it is a self-inflicted denial of service that also spends real money at the
+provider. Its message repeats the unkeyed-channel caveat: an unconfigured channel falls back to the
+log driver and records every message as sent without delivering any of it, and the moment to learn
+that is before 50,000 leads go out (FR-COMM-05).
+
+**`preview` is bulk-limited too, even though it sends nothing.** It resolves the entire audience and
+asks the eligibility gate about every lead in it, so it costs what a start costs minus the provider
+calls. Unthrottled, it is a way to run the expensive half of a campaign repeatedly *without* the
+permission to send. "12,000 leads" and "12,000 leads of whom 4,000 are suppressed" are different
+decisions, and finding that out after pressing send is too late.
+
+**Pause and stop stay on the standard limiter, deliberately.** They are the brakes on `start`, and a
+limiter that made stopping a runaway campaign harder than starting it would be pointed the wrong way.
+
+**The audience is materialised once and never rebuilt.** Resume continues the same recipient list.
+Eligibility is nonetheless **re-evaluated per recipient at dispatch**, so a lead who opts out after
+the audience was built is skipped with reason `suppressed` and no message row is created
+(BR-DNC-03) — the highest-volume outbound path in the system is the one where a missed gate reaches
+the most people who said no.
+
+**Every skip carries a reason** and every targeted lead ends with either a message or a reason
+(BR-DNC-05). That is what `/recipients` is for: "why did 3,800 leads not get this?" is the question a
+campaign report exists to answer.
+
+**Stop is final; clone is the way back** (BR-CAMP-05). Frequency caps are `crm.campaigns` — 2/day,
+5/week per channel on rolling windows (BR-CAMP-04, T-19). Transactional and skipped messages do not
+consume them.
+
+**Scheduled campaigns need the scheduler.** `crm:dispatch-scheduled-campaigns` runs every minute;
+without that cron entry a campaign scheduled for 09:00 stays `scheduled` for ever while every screen
+claims it is going out (DEPLOYMENT §5).
+
+### Tag vocabulary (FR-LEAD-03, BR-INT-02)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/tags` | **`leads.view`** | Includes `leads_count` |
+| POST | `/api/v1/tags` | **`settings.manage`** | |
+| PATCH | `/api/v1/tags/{id}` | `settings.manage` | |
+| DELETE | `/api/v1/tags/{id}` | `settings.manage` | **Really deletes** |
+
+Filters: `is_system`. Sorts: `name`, `slug`, `is_system`, `created_at`. System tags sort last by
+default — they are the ones nobody can act on, so the editable vocabulary is what the page opens on.
+
+**There is no `show` and no `restore`.** A tag is a name and a colour, so the list already carries
+everything a single read would; and `tags` has no `deleted_at`, so a deletion has nothing to restore
+from.
+
+**Two gates, the same split products use.** Reading takes `leads.view`, because a tag name *is* lead
+data — it renders on the lead list, the lead form and the timeline, and a telecaller who could not
+read the vocabulary could not label anything. Writing takes `settings.manage`: the tag list is
+organisation reference data, and changing it changes what every lead in the CRM can be labelled with.
+
+**DELETE really deletes, and says what it cost.** `lead_tag` cascades, so unlike products and
+templates there is no archive to fall back on — which is why the response message states how many
+leads lost the label (`"Tag deleted and removed from 47 leads."`) and why the list carries
+`leads_count` so a screen can warn *before* asking.
+
+**System tags are refused to everyone, including Super Admin.** The Interest Engine owns them
+(BR-INT-02). The refusal is raised by `TagService::guardEditable()` *before* the policy so it can say
+**why** — the policy's generic 403 is misleading for a caller who does hold `settings.manage` and is
+simply touching a tag that is not theirs to touch. Route middleware has already refused anyone
+without the permission, so this leaks nothing.
 
 ### Duplicate review (T-64 — BR-DUP-03/04)
 
@@ -641,6 +1122,46 @@ Filters: `reason`, `channel`, `source`, `active`, `lead_id`. Sorts: `created_at`
 **Scope**: entries are visible through their lead, so a telecaller sees their own book only. Entries with no lead (an inbound STOP from an unknown number) are visible only at `All` scope.
 
 **`dnc.remove` is in `Permission::isAudited()`**, so every removal writes an `audit_logs` row from the middleware before the controller runs (SEC-AUD-02, FR-DNC-04).
+
+### Skip / suppression reporting (BR-DNC-05, FR-DNC-03)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/dnc/skips` | `dnc.view` | Aggregate counts by channel and reason, plus a live active-list snapshot |
+| GET | `/api/v1/dnc/skips/log` | `dnc.view` | The row-level attempts behind the aggregate |
+
+Both accept `?from=&to=` (default: this month, [§9](#9-long-running-operations)'s period convention).
+
+**`skips` is aggregate and deliberately NOT data-scoped.** These are counts, not the per-lead
+suppression list, so the SEC-AUTHZ-03 concern that scopes `GET /dnc` does not apply — a total of "340
+calls skipped for DNC this month" identifies nobody. Two reason buckets are kept distinct on purpose:
+a manual/absolute suppression and BR-DNC-03's post-queue window read as different compliance
+questions even though both stop a send.
+
+**`skips/log` names the people, and is scoped through the lead.** The aggregate answers "how many";
+the log answers "did we contact this specific person after they said no", which is what a compliance
+question actually asks. Filters: `filter[reason]` (free-form — skips come from three writers: campaign,
+dialer, and BR-DNC-03's window, with no single enum spanning all of them), `filter[dnc_reason]` (the
+closed `DncReason` enum — why the lead is on the list), `filter[channel]`, `filter[source]`
+(`manual`/`campaign`/`dialer`). Free-text `?q=` matches the lead's name or phone.
+
+### Audit log (SEC-AUD-01..04)
+
+| Method | Path | Permission | Notes |
+|--------|------|-----------|-------|
+| GET | `/api/v1/audit-logs` | **`audit.view`** | Admin and Super Admin only |
+
+**Read only, and structurally so.** One route, one controller method, and `AuditLog` refuses `UPDATE`
+and `DELETE` at the model layer for both single-record and mass-query paths (SEC-AUD-01) — a mistaken
+entry is corrected by writing another one, not editing the first.
+
+**Not data-scoped, deliberately.** `audit.view` is Admin+ only, and an audit trail filtered to what
+the reader owns would hide exactly the entries an investigation is looking for (SEC-AUD-04).
+
+Filters: `filter[user_id]` (the actor), `filter[action]`, `filter[auditable_type]` +
+`filter[auditable_id]` (the subject), `filter[created_at][between]=<from>,<to>`. Free-text `?q=`
+matches the action key or description. Sorts: `created_at`, `action`. Default order is newest first —
+an audit trail is read backwards from the incident.
 
 ### Permission gate
 

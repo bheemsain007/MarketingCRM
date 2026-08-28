@@ -531,6 +531,44 @@ class SalesPipelineTest extends TestCase
             ->assertStatus(403);
     }
 
+    // -----------------------------------------------------------------------
+    // The pipeline list (FR-SALE-01)
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function the_pipeline_can_include_product_lines_with_their_names(): void
+    {
+        $this->actingAsRole(RoleName::Admin);
+        $lead = Lead::factory()->create();
+        $product = Product::factory()->create(['name' => 'Annual Licence', 'base_price' => 1000]);
+
+        $this->postJson("/api/v1/leads/{$lead->id}/opportunities", [
+            'title' => 'Deal',
+            'products' => [['product_id' => $product->id, 'quantity' => 2]],
+        ])->assertCreated();
+
+        $items = $this->getJson('/api/v1/opportunities?include=products.product')
+            ->assertOk()->json('data.items');
+
+        // The resource reaches from the line to the product for its name, so
+        // loading only the lines left it lazy-loading one relation per row -
+        // which under preventLazyLoading is a 500, not a slow response.
+        $this->assertSame('Annual Licence', $items[0]['products'][0]['name']);
+        $this->assertSame(2, $items[0]['products'][0]['quantity']);
+    }
+
+    #[Test]
+    public function an_include_that_stops_short_of_what_the_resource_reads_is_refused(): void
+    {
+        $this->actingAsRole(RoleName::Admin);
+        $this->opportunityWorth(1000);
+
+        // An include names the full path the resource walks. Offering the
+        // one-level spelling as well would just be a second way to ask for the
+        // 500 this endpoint used to return.
+        $this->getJson('/api/v1/opportunities?include=products')->assertStatus(422);
+    }
+
     #[Test]
     public function a_read_only_role_cannot_record_a_sale(): void
     {

@@ -7,6 +7,8 @@ use App\Enums\RoleName;
 use App\Models\DncEntry;
 use App\Models\Lead;
 use App\Models\LeadProduct;
+use App\Models\Opportunity;
+use App\Models\OpportunityProduct;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\User;
@@ -242,6 +244,19 @@ class LeadProductInterestTest extends TestCase
 
         $this->assertSame(LeadStatus::Contacted, $lead->fresh()->status);
 
+        // BR-SALE-01: Proposal requires an open Opportunity with a product and
+        // a value. Without one, the propagation below is refused rather than
+        // erroring (LeadProductService::syncLeadStatus logs and moves on), so
+        // this is here to let the advance actually happen.
+        $opportunity = Opportunity::factory()->create(['lead_id' => $lead->id, 'value' => 5000]);
+        OpportunityProduct::create([
+            'opportunity_id' => $opportunity->id,
+            'product_id' => Product::factory()->create()->id,
+            'quantity' => 1,
+            'unit_price' => 5000,
+            'line_total' => 5000,
+        ]);
+
         $this->postJson("/api/v1/leads/{$lead->id}/products", [
             'product_id' => Product::factory()->create()->id,
             'interest_status' => 'proposal',
@@ -256,6 +271,25 @@ class LeadProductInterestTest extends TestCase
             'source_channel' => 'system',
             'changed_by' => null,
         ]);
+    }
+
+    #[Test]
+    public function the_lead_does_not_advance_to_proposal_from_a_product_change_without_an_opportunity(): void
+    {
+        // The other half of BR-SALE-01: the product interest can legitimately
+        // reach `proposal` while the lead itself has no costed opportunity, and
+        // that must not be a way around the rule enforced on the direct status
+        // endpoint. The product write still succeeds; only the propagated lead
+        // advance is refused.
+        $user = $this->actingAsRole(RoleName::Telecaller);
+        $lead = $this->leadFor($user, LeadStatus::Contacted);
+
+        $this->postJson("/api/v1/leads/{$lead->id}/products", [
+            'product_id' => Product::factory()->create()->id,
+            'interest_status' => 'proposal',
+        ])->assertStatus(201);
+
+        $this->assertSame(LeadStatus::Contacted, $lead->fresh()->status);
     }
 
     #[Test]

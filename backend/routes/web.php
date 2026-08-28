@@ -153,6 +153,13 @@ Route::middleware('auth')->group(function () {
     Route::get('/dnc', [PageController::class, 'dnc'])
         ->middleware('permission:dnc.view')->name('web.dnc');
 
+    /*
+     * The compliance trail (SEC-AUD-02). Read-only, like the API behind it -
+     * `audit_logs` is append-only, so there is no write screen to gate.
+     */
+    Route::get('/audit', [PageController::class, 'audit'])
+        ->middleware('permission:audit.view')->name('web.audit');
+
     Route::get('/products', [PageController::class, 'products'])
         ->middleware('permission:products.view')->name('web.products');
 

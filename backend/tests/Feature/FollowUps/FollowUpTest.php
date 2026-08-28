@@ -5,6 +5,7 @@ namespace Tests\Feature\FollowUps;
 use App\Enums\FollowUpStatus;
 use App\Enums\RoleName;
 use App\Models\FollowUp;
+use App\Models\InterestSignal;
 use App\Models\Lead;
 use App\Models\Product;
 use App\Models\Role;
@@ -31,6 +32,13 @@ class FollowUpTest extends TestCase
     {
         parent::setUp();
         $this->seed(RolePermissionSeeder::class);
+    }
+
+    /** A few tests below freeze the clock for "missed" (clock-dependent). */
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
     }
 
     private function user(RoleName $role): User
@@ -260,6 +268,122 @@ class FollowUpTest extends TestCase
         $this->artisan('crm:process-follow-ups')->assertSuccessful();
 
         $this->assertSame(FollowUpStatus::Open, $followUp->fresh()->status);
+    }
+
+    #[Test]
+    public function a_missed_follow_up_notifies_its_owner(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 10:00:00'));
+
+        $owner = $this->user(RoleName::Telecaller);
+        $lead = Lead::factory()->create();
+        $followUp = FollowUp::factory()->for($lead)->create([
+            'assigned_to' => $owner->id,
+            'scheduled_at' => now()->subHour(),
+            'status' => FollowUpStatus::Open->value,
+        ]);
+
+        // BR-NOTIF-02 lists follow-up overdue among its triggers, and the
+        // 'follow_up_missed' notification type has existed since the
+        // notifications table was created - this is the first thing to ever
+        // write one.
+        $this->artisan('crm:process-follow-ups')->assertSuccessful();
+
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $owner->id,
+            'type' => 'follow_up_missed',
+            'reference_type' => FollowUp::class,
+            'reference_id' => $followUp->id,
+        ]);
+    }
+
+    #[Test]
+    public function a_missed_follow_up_costs_the_leads_interest_score(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 10:00:00'));
+
+        $lead = Lead::factory()->create();
+        $dueAt = now()->subHour();
+        $followUp = FollowUp::factory()->for($lead)->create([
+            'scheduled_at' => $dueAt,
+            'status' => FollowUpStatus::Open->value,
+        ]);
+
+        // BR-FUP-02: a missed commitment is not just a flag, it costs the lead
+        // score. InterestSignalType::FollowUpMissed carries a -5 weight
+        // (config('crm.scoring.signals.follow_up_missed')) that nothing in
+        // production ever emitted before this sweep did.
+        $this->artisan('crm:process-follow-ups')->assertSuccessful();
+
+        $this->assertDatabaseHas('interest_signals', [
+            'lead_id' => $lead->id,
+            'type' => 'follow_up_missed',
+            'evidence_type' => FollowUp::class,
+            'evidence_id' => $followUp->id,
+            'points_awarded' => -5,
+        ]);
+
+        // Backdated to when the follow-up was actually due, not to the moment
+        // the scheduler happened to sweep it, so the score explanation reads
+        // as the history it actually is.
+        $signal = InterestSignal::where('lead_id', $lead->id)->where('type', 'follow_up_missed')->firstOrFail();
+        $this->assertTrue($dueAt->equalTo($signal->occurred_at));
+    }
+
+    #[Test]
+    public function a_missed_follow_up_still_costs_score_when_its_owner_is_disabled(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 10:00:00'));
+
+        $owner = $this->user(RoleName::Telecaller);
+        $owner->forceFill(['is_active' => false])->save();
+
+        $lead = Lead::factory()->create();
+        $followUp = FollowUp::factory()->for($lead)->create([
+            'assigned_to' => $owner->id,
+            'scheduled_at' => now()->subHour(),
+            'status' => FollowUpStatus::Open->value,
+        ]);
+
+        // The notification and the score hit are two separate effects of the
+        // same miss - a disabled account cannot read a notification, but the
+        // lead still paid for the commitment being ignored.
+        $this->artisan('crm:process-follow-ups')->assertSuccessful();
+
+        $this->assertSame(0, $owner->crmNotifications()->count());
+        $this->assertDatabaseHas('interest_signals', [
+            'lead_id' => $lead->id,
+            'type' => 'follow_up_missed',
+        ]);
+    }
+
+    #[Test]
+    public function a_missed_follow_up_on_an_archived_lead_notifies_but_scores_nothing(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-20 10:00:00'));
+
+        $owner = $this->user(RoleName::Telecaller);
+        $lead = Lead::factory()->create();
+        $followUp = FollowUp::factory()->for($lead)->create([
+            'assigned_to' => $owner->id,
+            'scheduled_at' => now()->subHour(),
+            'status' => FollowUpStatus::Open->value,
+        ]);
+        $lead->delete();
+
+        // An archived lead has nothing left to score, but the flag and the
+        // owner's notification still happen - the miss was still real.
+        $this->artisan('crm:process-follow-ups')->assertSuccessful();
+
+        $this->assertSame(FollowUpStatus::Missed, $followUp->fresh()->status);
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $owner->id,
+            'type' => 'follow_up_missed',
+        ]);
+        $this->assertDatabaseMissing('interest_signals', [
+            'lead_id' => $lead->id,
+            'type' => 'follow_up_missed',
+        ]);
     }
 
     // -----------------------------------------------------------------------

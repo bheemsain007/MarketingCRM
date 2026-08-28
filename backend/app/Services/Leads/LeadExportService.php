@@ -140,6 +140,64 @@ class LeadExportService
         }
     }
 
+    /**
+     * Deletes the generated files of exports past their download window
+     * (SEC-PII-05).
+     *
+     * `expires_at` is already enforced on the read side - the download endpoint
+     * refuses an expired export - but refusing to serve a file is not deleting
+     * it. Without this sweep every export ever run stays on disk for ever, and
+     * each one is a full-fidelity copy of the lead database (name, phone,
+     * email) that nothing will ever read again.
+     *
+     * Scheduler-owned like the sibling retention sweeps: expiry is the passage
+     * of time, so nothing triggers it on its own.
+     *
+     * @return int how many files were deleted
+     */
+    public function purgeExpired(): int
+    {
+        $purged = 0;
+
+        // Chunked by id, matching CallRecordingService::purgeExpired(): the
+        // number of stale exports after any gap in the schedule is unbounded,
+        // and nothing here needs them all in memory at once.
+        LeadExport::expired()
+            ->whereNotNull('file_path')
+            ->chunkById(100, function ($exports) use (&$purged) {
+                foreach ($exports as $export) {
+                    $this->purgeFile($export);
+                    $purged++;
+                }
+            });
+
+        return $purged;
+    }
+
+    /**
+     * Removes the bytes and keeps the row (SEC-PII-05).
+     *
+     * The ROW is the audit trail - who exported which filters, when, and how
+     * many rows came out - and the migration reserves `file_path = null` as the
+     * post-purge state precisely so it survives its file. Deleting the record
+     * would destroy the evidence that the retention policy was honoured, which
+     * is the only thing anyone ever asks about afterwards.
+     *
+     * A purged export needs no new status: `completed` with no path is already
+     * what `download` treats as "no file to serve", so the read side needs no
+     * change to stay correct.
+     */
+    public function purgeFile(LeadExport $export): void
+    {
+        if ($export->fileIsGone()) {
+            return;
+        }
+
+        Storage::disk((string) $export->disk)->delete($export->file_path);
+
+        $export->forceFill(['file_path' => null])->save();
+    }
+
     public function markFailed(LeadExport $export, string $reason): void
     {
         $export->forceFill([

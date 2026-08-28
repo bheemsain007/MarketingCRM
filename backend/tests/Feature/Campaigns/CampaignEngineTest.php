@@ -13,6 +13,7 @@ use App\Models\Campaign;
 use App\Models\CampaignRecipient;
 use App\Models\Lead;
 use App\Models\Message;
+use App\Models\Notification;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Campaigns\CampaignEligibility;
@@ -24,6 +25,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Queue;
 use PHPUnit\Framework\Attributes\Test;
+use RuntimeException;
 use Tests\TestCase;
 
 /**
@@ -301,6 +303,221 @@ class CampaignEngineTest extends TestCase
         // honestly.
         $this->patchJson("/api/v1/campaigns/{$campaign->id}", ['name' => 'Renamed'])
             ->assertStatus(422);
+    }
+
+    // -----------------------------------------------------------------------
+    // A job that gives up (BR-CAMP-05, BR-DNC-05)
+    //
+    // Completion is decided by "no recipient row is still pending". A job that
+    // exhausts its retries without recording an outcome therefore does not
+    // merely lose one message - it holds the whole campaign Running for ever,
+    // which every screen reads as a send still in progress.
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function a_recipient_whose_job_dies_after_its_last_retry_does_not_leave_the_campaign_running(): void
+    {
+        Bus::fake();
+        $owner = $this->actingAsRole(RoleName::Admin);
+        $this->emailLead();
+        $campaign = $this->campaign(['created_by' => $owner->id]);
+
+        $this->runCampaign($campaign);
+        $recipient = CampaignRecipient::firstOrFail();
+
+        // Exactly what the queue calls once `tries` is exhausted.
+        (new SendCampaignMessage($recipient->id))
+            ->failed(new RuntimeException('The provider refused the message.'));
+
+        $recipient->refresh();
+        $this->assertSame('failed', $recipient->status);
+        $this->assertNotNull($recipient->processed_at);
+
+        $campaign->refresh();
+        $this->assertSame(CampaignStatus::Completed, $campaign->status);
+        $this->assertNotNull($campaign->completed_at);
+
+        // The counter the campaign report reads for failure_rate. Nothing wrote
+        // to it before this handler existed.
+        $this->assertSame(1, $campaign->total_failed);
+
+        // Reaching nobody is the outcome, so the owner hears about it - the
+        // notification the stuck campaign never sent.
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $owner->id,
+            'type' => 'campaign_failed',
+        ]);
+    }
+
+    #[Test]
+    public function a_dead_job_on_the_last_pending_recipient_still_lets_the_campaign_finish(): void
+    {
+        Bus::fake();
+        $this->emailLead();
+        $this->emailLead();
+        $campaign = $this->campaign();
+
+        $this->runCampaign($campaign);
+        $recipients = CampaignRecipient::where('campaign_id', $campaign->id)->get();
+
+        $this->processRecipient($recipients[0]);
+
+        // Still open, correctly: one recipient is genuinely outstanding.
+        $this->assertSame(CampaignStatus::Running, $campaign->refresh()->status);
+
+        (new SendCampaignMessage($recipients[1]->id))
+            ->failed(new RuntimeException('The provider refused the message.'));
+
+        // A failed row counts as no-longer-pending, which is what lets the
+        // completion check make progress at all.
+        $this->assertSame(
+            0,
+            CampaignRecipient::where('campaign_id', $campaign->id)->where('status', 'pending')->count(),
+        );
+        $this->assertSame(CampaignStatus::Completed, $campaign->refresh()->status);
+        $this->assertSame(1, $campaign->total_sent);
+        $this->assertSame(1, $campaign->total_failed);
+    }
+
+    #[Test]
+    public function a_failure_reported_after_the_row_was_already_resolved_is_not_counted_twice(): void
+    {
+        Bus::fake();
+        $this->emailLead();
+        $campaign = $this->campaign();
+
+        $this->runCampaign($campaign);
+        $recipient = CampaignRecipient::firstOrFail();
+
+        $this->processRecipient($recipient);
+
+        // The counter increments sit after the row update, so a throw can land
+        // here with the outcome already recorded. Overwriting it would lose the
+        // real result and count the recipient twice.
+        (new SendCampaignMessage($recipient->id))
+            ->failed(new RuntimeException('The connection dropped after the send.'));
+
+        $this->assertSame('sent', $recipient->refresh()->status);
+
+        $campaign->refresh();
+        $this->assertSame(1, $campaign->total_sent);
+        $this->assertSame(0, $campaign->total_failed);
+    }
+
+    #[Test]
+    public function a_fan_out_that_dies_does_not_strand_its_audience_at_pending(): void
+    {
+        Bus::fake();
+        $owner = $this->actingAsRole(RoleName::Admin);
+        $this->emailLead();
+        $this->emailLead();
+        $campaign = $this->campaign(['created_by' => $owner->id]);
+
+        $this->runCampaign($campaign);
+        $this->assertSame(
+            2,
+            CampaignRecipient::where('campaign_id', $campaign->id)->where('status', 'pending')->count(),
+        );
+
+        // DispatchCampaign runs with tries = 1, so there is no later attempt to
+        // finish handing these rows out. Nobody else ever will.
+        (new DispatchCampaign($campaign->id))
+            ->failed(new RuntimeException('The database went away part-way through the fan-out.'));
+
+        $this->assertSame(
+            0,
+            CampaignRecipient::where('campaign_id', $campaign->id)->where('status', 'pending')->count(),
+        );
+        $this->assertSame(
+            2,
+            CampaignRecipient::where('campaign_id', $campaign->id)->where('status', 'failed')->count(),
+        );
+
+        $campaign->refresh();
+        $this->assertSame(CampaignStatus::Completed, $campaign->status);
+        $this->assertSame(2, $campaign->total_failed);
+        $this->assertDatabaseHas('notifications', [
+            'user_id' => $owner->id,
+            'type' => 'campaign_failed',
+        ]);
+    }
+
+    // -----------------------------------------------------------------------
+    // An unkeyed channel is admitted, not hidden (FR-COMM-05)
+    //
+    // An unconfigured channel falls back to LogDriver: every message is
+    // recorded as sent and nobody receives anything. The single-send endpoint
+    // says so on its 202; across a whole audience the same silence is far more
+    // expensive, and the counters read as a completely successful send.
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function starting_a_campaign_on_a_channel_with_no_provider_says_so_on_the_response(): void
+    {
+        Bus::fake();
+        $this->actingAsRole(RoleName::Admin);
+        $this->emailLead();
+        $campaign = $this->campaign();
+
+        $response = $this->postJson("/api/v1/campaigns/{$campaign->id}/start")->assertStatus(202);
+
+        // Before the audience goes out, not after a report of sends nobody got.
+        $this->assertStringContainsString(
+            'No provider is configured',
+            (string) $response->json('message'),
+        );
+    }
+
+    #[Test]
+    public function starting_a_campaign_on_a_configured_channel_carries_no_such_warning(): void
+    {
+        Bus::fake();
+        $this->actingAsRole(RoleName::Admin);
+
+        // SettingsService reads a stored row first and falls back to config, and
+        // the settings table is empty here - so this is a configured channel.
+        config([
+            'providers.mailercloud.api_key' => 'mc-test-key',
+            'providers.mailercloud.from_email' => 'crm@example.com',
+        ]);
+
+        $this->emailLead();
+        $campaign = $this->campaign();
+
+        $response = $this->postJson("/api/v1/campaigns/{$campaign->id}/start")->assertStatus(202);
+
+        // The warning has to mean something, so it must not be boilerplate.
+        $this->assertStringNotContainsString(
+            'No provider is configured',
+            (string) $response->json('message'),
+        );
+    }
+
+    #[Test]
+    public function the_completion_notification_admits_that_an_unkeyed_channel_delivered_nothing(): void
+    {
+        Bus::fake();
+        $owner = $this->actingAsRole(RoleName::Admin);
+        $this->emailLead();
+        $campaign = $this->campaign(['created_by' => $owner->id]);
+
+        $this->runCampaign($campaign);
+
+        foreach (CampaignRecipient::where('campaign_id', $campaign->id)->get() as $recipient) {
+            $this->processRecipient($recipient);
+        }
+
+        // The lie this exists to correct: one "sent", zero delivered, and every
+        // count says the campaign worked.
+        $campaign->refresh();
+        $this->assertSame(CampaignStatus::Completed, $campaign->status);
+        $this->assertSame(1, $campaign->total_sent);
+
+        $body = (string) Notification::where('user_id', $owner->id)
+            ->where('type', 'campaign_completed')
+            ->value('body');
+
+        $this->assertStringContainsString('No provider is configured', $body);
     }
 
     // -----------------------------------------------------------------------

@@ -8,6 +8,8 @@ use App\Models\CampaignRecipient;
 use App\Services\Campaigns\CampaignService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Log;
+use Throwable;
 
 /**
  * Fans a campaign out into one job per recipient (FR-CAMP-05, BR-CAMP-03).
@@ -62,6 +64,51 @@ class DispatchCampaign implements ShouldQueue
         if ($queued === 0) {
             $this->completeIfFinished($campaign);
         }
+    }
+
+    /**
+     * The fan-out died. Nothing will ever hand these rows out again.
+     *
+     * `tries = 1`, so there is no later attempt to finish the chunk loop: every
+     * recipient still `pending` is one no send job will ever be dispatched for,
+     * and completion is decided by "no row is still pending". Left alone the
+     * campaign stays Running for ever, which reads on every screen as a send
+     * still in progress (BR-CAMP-05, BR-DNC-05).
+     */
+    public function failed(Throwable $e): void
+    {
+        Log::error('Campaign fan-out job failed permanently.', [
+            'campaign_id' => $this->campaignId,
+            'exception' => $e->getMessage(),
+        ]);
+
+        $campaign = Campaign::find($this->campaignId);
+
+        if ($campaign === null || $campaign->status !== CampaignStatus::Running) {
+            return;
+        }
+
+        /*
+         * A failure part-way through the chunk loop leaves some jobs already on
+         * the queue, and marking their rows here costs those sends - the send
+         * job only acts on a `pending` row. That is the deliberate trade: a
+         * half-dispatched campaign cannot be told apart from a stuck one, and
+         * an audience frozen at `pending` for ever is strictly worse than one
+         * recorded as failed, which an operator can see and clone to re-run.
+         */
+        $abandoned = CampaignRecipient::query()
+            ->where('campaign_id', $campaign->id)
+            ->where('status', 'pending')
+            ->update(['status' => 'failed', 'processed_at' => now()]);
+
+        if ($abandoned > 0) {
+            $campaign->increment('total_failed', $abandoned);
+        }
+
+        // Now reachable: with no pending rows left the campaign becomes
+        // terminal, and `notifyOwnerOfCompletion` reads zero sends against a
+        // real audience as the failure it is.
+        $this->completeIfFinished($campaign);
     }
 
     private function completeIfFinished(Campaign $campaign): void

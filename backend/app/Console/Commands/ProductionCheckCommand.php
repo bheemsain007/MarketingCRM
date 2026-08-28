@@ -57,6 +57,7 @@ class ProductionCheckCommand extends Command
         $this->checkHttps();
         $this->checkSessionCookie();
         $this->checkStorage();
+        $this->checkMail();
         $this->checkQueue();
         $this->checkScheduler();
         $this->checkDatabase();
@@ -155,17 +156,68 @@ class ProductionCheckCommand extends Command
         }
 
         /*
-         * Recordings and lead imports are bulk PII and must not be on the
-         * `public` disk, which is a symlinked directory served directly by
-         * Apache with no signature check (SEC-FILE-03, SEC-PII-05).
+         * Recordings, lead imports and lead exports are bulk PII and must not be
+         * on the `public` disk, which is a symlinked directory served directly
+         * by Apache with no signature check (SEC-FILE-03, SEC-PII-05). An export
+         * is the whole lead database in one file (SEC-PII-04).
+         *
+         * A key that resolves to nothing is reported as a FAILURE rather than
+         * printed as "default". This check spent its whole life reading
+         * `crm.lead_import.disk`, which does not exist - the real key is
+         * `crm.imports.disk` - so it read null, null never equals "public", and
+         * it passed every time. A guard that cannot fail is not a guard.
          */
-        foreach (['recordings' => 'crm.recordings.disk', 'lead imports' => 'crm.lead_import.disk'] as $label => $key) {
-            $disk = (string) config($key, '');
+        foreach ([
+            'recordings' => 'crm.recordings.disk',
+            'lead imports' => 'crm.imports.disk',
+            'lead exports' => 'crm.exports.disk',
+        ] as $label => $key) {
+            $disk = config($key);
+
+            if (! is_string($disk) || $disk === '') {
+                $this->bad($label.' disk', 'config("'.$key.'") resolves to nothing, so this check cannot tell where the files land.');
+
+                continue;
+            }
 
             $disk === 'public'
                 ? $this->bad($label.' disk', 'Set to "public" - the files are served directly by the web server, bypassing signed URLs.')
-                : $this->ok($label.' disk', $disk ?: 'default');
+                : $this->ok($label.' disk', $disk);
         }
+    }
+
+    /**
+     * Mail is the only account-recovery path in this application (SEC-AUTH-06).
+     *
+     * Password reset is the sole thing the app mails, so a mailer that delivers
+     * nothing is not a cosmetic fault - it is a locked door with no key. Both
+     * halves fail silently: `MAIL_MAILER=log` writes the reset link into
+     * storage/logs and returns success, and an EMPTY from-address is worse
+     * still, because an empty .env line resolves to '' rather than falling
+     * through to the config default and Symfony then refuses to build the
+     * message at all.
+     */
+    private function checkMail(): void
+    {
+        $from = trim((string) config('mail.from.address'));
+
+        $from === ''
+            ? $this->bad('MAIL_FROM_ADDRESS', 'Empty. Every message is refused before it is sent ("An email must have a \"From\" or a \"Sender\" header"), which includes password reset - the only way back into an account.')
+            : $this->ok('MAIL_FROM_ADDRESS', $from);
+
+        $mailer = (string) config('mail.default');
+
+        if (! in_array($mailer, ['log', 'array'], true)) {
+            $this->ok('MAIL_MAILER', $mailer);
+
+            return;
+        }
+
+        // Correct locally, and a locked-out user list on a live host - so which
+        // one it is depends entirely on the environment.
+        app()->environment('production')
+            ? $this->bad('MAIL_MAILER', 'Is "'.$mailer.'" on a production host. Password reset links are written to the log (or dropped) and never reach anyone.')
+            : $this->iffy('MAIL_MAILER', 'Is "'.$mailer.'" - nothing is delivered. Right for local work, wrong the moment this host is live.');
     }
 
     private function checkQueue(): void

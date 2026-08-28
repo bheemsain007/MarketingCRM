@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AttendanceController;
+use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\CallController;
 use App\Http\Controllers\Api\V1\CallRecordingController;
@@ -32,6 +33,7 @@ use App\Http\Controllers\Api\V1\TemplateController;
 use App\Http\Controllers\Api\V1\TwoFactorAdminController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\WebhookController;
+use App\Http\Controllers\Api\V1\WhatsAppWebhookController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -621,6 +623,22 @@ Route::middleware('throttle:api-webhook')->prefix('webhooks')->group(function ()
         ->name('api.v1.webhooks.meta.verify');
     Route::post('/meta', [MetaWebhookController::class, 'receive'])
         ->name('api.v1.webhooks.meta');
+
+    /*
+     * WhatsApp Cloud API callbacks (FR-WA-01, FR-COMM-03).
+     *
+     * Separate from /delivery on purpose. That endpoint authenticates with an
+     * `X-Webhook-Token` shared secret, which a BSP can be told to send and Meta
+     * cannot: Meta signs with X-Hub-Signature-256 and answers a `hub.*` GET
+     * handshake. `WhatsAppDriver` sends against the Cloud API direct, so without
+     * this path that shape had no reachable return path at all, and the
+     * documented `whatsapp.app_secret` / `whatsapp.webhook_verify_token`
+     * credentials were read by nothing.
+     */
+    Route::get('/whatsapp', [WhatsAppWebhookController::class, 'verify'])
+        ->name('api.v1.webhooks.whatsapp.verify');
+    Route::post('/whatsapp', [WhatsAppWebhookController::class, 'receive'])
+        ->name('api.v1.webhooks.whatsapp');
 });
 
 /*
@@ -673,6 +691,23 @@ Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('tags')->gr
 
     Route::delete('/{tag}', [TagController::class, 'destroy'])
         ->middleware('permission:settings.manage')->name('api.v1.tags.destroy');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Audit trail (SEC-AUD-01..04)
+|--------------------------------------------------------------------------
+| One verb, deliberately. `audit_logs` is append-only and the model refuses
+| updates and deletes through both doors (SEC-AUD-01), so there is no write
+| route here to be gated later - and a compliance trail with an edit endpoint
+| would not be evidence of anything.
+|
+| `audit.view` existed and was granted from the first seeder without a single
+| reader anywhere in the application. This is that reader.
+*/
+Route::middleware(['auth:sanctum', 'throttle:api-standard'])->group(function () {
+    Route::get('/audit-logs', [AuditLogController::class, 'index'])
+        ->middleware('permission:audit.view')->name('api.v1.audit-logs.index');
 });
 
 /*

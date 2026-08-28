@@ -5,6 +5,7 @@ namespace App\Services\Payments;
 use App\Enums\ErrorCode;
 use App\Enums\PaymentStatus;
 use App\Exceptions\ApiException;
+use App\Models\AuditLog;
 use App\Models\Payment;
 use App\Models\PaymentStatusHistory;
 use App\Models\Sale;
@@ -146,6 +147,42 @@ class PaymentService
             ])->save();
 
             $this->writeHistory($payment, $current, $target, $actorId, $source, $reason);
+
+            /*
+             * SEC-AUD-02 names payment status changes among the minimum audited
+             * events, and a refund is the one that moves money back out.
+             *
+             * `payments.refund` sits in `Permission::isAudited()`, which looks
+             * like the record already exists - it does not. That list is only
+             * consulted by the route-level permission middleware, and no route
+             * passes `payments.refund`: PaymentController checks the permission
+             * in its own body because one endpoint serves every transition. So
+             * the audited permission never fired, and the highest-value action
+             * in the module left nothing behind but its status history.
+             *
+             * Written for every transition rather than only refunds, because
+             * the gateway webhook path reaches this method with no user at all
+             * and "who moved this payment to Paid" is the same question.
+             */
+            AuditLog::create([
+                'user_id' => $actorId,
+                'action' => 'payment_status_changed',
+                'auditable_type' => Payment::class,
+                'auditable_id' => $payment->id,
+                'old_values' => ['status' => $current->value],
+                'new_values' => [
+                    'status' => $target->value,
+                    'amount' => (string) $payment->amount,
+                    'source' => $source,
+                    'reason' => $reason,
+                ],
+                'description' => sprintf(
+                    'Payment %s moved from %s to %s',
+                    $payment->reference,
+                    $current->label(),
+                    $target->label(),
+                ),
+            ]);
 
             return $payment->fresh();
         });

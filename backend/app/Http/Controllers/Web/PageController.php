@@ -15,10 +15,13 @@ use App\Enums\Permission;
 use App\Enums\RoleName;
 use App\Http\Controllers\Controller;
 use App\Models\Campaign;
+use App\Models\DncEntry;
 use App\Models\Lead;
 use App\Models\LeadSource;
+use App\Models\Payment;
 use App\Models\Product;
 use App\Models\Tag;
+use App\Models\User;
 use App\Services\Campaigns\CampaignService;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -252,6 +255,32 @@ class PageController extends Controller
     {
         return view('dnc.index', [
             'reasons' => DncReason::cases(),
+        ]);
+    }
+
+    /**
+     * The compliance trail (SEC-AUD-02, SEC-AUD-04).
+     *
+     * Read-only, like everything behind `audit.view` - `audit_logs` is
+     * append-only, so this screen has no controls to draw for a second
+     * permission the way the payments and users screens do.
+     *
+     * Two pieces of reference data, both because the alternative is worse than
+     * a query. The actor list turns a filter on `user_id` into a name picker
+     * rather than asking a reader to know a numeric id. The subject list maps
+     * the fully-qualified class names stored in `auditable_type` to labels,
+     * because a filter card offering `App\Models\DncEntry` is a filter card
+     * nobody uses.
+     */
+    public function audit(): View
+    {
+        return view('audit.index', [
+            'actors' => User::query()->select(['id', 'name'])->orderBy('name')->get(),
+            'subjectTypes' => [
+                'Lead' => Lead::class,
+                'Suppression' => DncEntry::class,
+                'Payment' => Payment::class,
+            ],
         ]);
     }
 

@@ -82,13 +82,21 @@ class CampaignController extends Controller
         return ApiResponse::success($this->campaigns->preview($campaign), 'Audience previewed.');
     }
 
+    /**
+     * Carries the unkeyed-channel caveat, exactly as `MessageController::store()`
+     * does for a single send: an unconfigured channel falls back to the log
+     * driver and records every message as sent without delivering any of it.
+     * The moment to learn that is before a 50,000-lead audience goes out, not
+     * from a report of sends nobody received (FR-COMM-05).
+     */
     public function start(Request $request, Campaign $campaign): JsonResponse
     {
         $campaign = $this->campaigns->start($campaign, $request->user());
+        $caveat = $this->campaigns->deliveryCaveat($campaign);
 
         return ApiResponse::accepted(
             new CampaignResource($campaign),
-            'Campaign started. Recipients are being queued.',
+            'Campaign started. Recipients are being queued.'.($caveat !== null ? ' '.$caveat : ''),
         );
     }
 

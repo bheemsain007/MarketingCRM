@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Version** | 1.1 |
-| **Last updated** | 2026-08-10 (Phase 2) |
+| **Version** | 1.3 |
+| **Last updated** | 2026-08-28 — §5 scheduler table completed (was 1 command, actually 10) and pointed at the real health-check route; §3 environment list completed 2026-08-27 (mail, trusted proxies, security headers, session cookie, lead exports) |
 | **Status** | Local stack installed and verified. **Production target: Hostinger shared hosting** — see §3A for what that constrains |
 | **Related** | [ARCHITECTURE.md](ARCHITECTURE.md) · [SECURITY.md](SECURITY.md) · [TESTING.md](TESTING.md) |
 
@@ -51,7 +51,7 @@ Start-Service MySQL84
 
 ## 3. Required Environment Variables
 
-Grouped; `.env.example` carries every key with **empty** values (SEC-CFG-02).
+Grouped. `.env.example` carries every key below. **Credentials are always empty** (SEC-CFG-02); everything else carries a working value on purpose, because a blank line does *not* fall through to the config default — it overrides it with `""`. That is how `MAIL_FROM_ADDRESS=` silently disabled every mail this application sends, and it is why `SECURITY_FRAME_OPTIONS=` would send an empty header rather than `DENY`.
 
 ```
 # Core
@@ -64,12 +64,32 @@ DB_CONNECTION, DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD
 REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
 QUEUE_CONNECTION=redis, CACHE_STORE=redis, SESSION_DRIVER=redis
 
-# Storage (recordings + lead import files — private disks, never `public`)
-FILESYSTEM_DISK, RECORDINGS_DISK, RECORDINGS_RETENTION_DAYS
+# Storage (recordings, lead imports AND lead exports — private disks, never `public`)
+FILESYSTEM_DISK, RECORDINGS_DISK, RECORDINGS_RETENTION_DAYS, RECORDINGS_SIGNED_URL_MINUTES
 LEAD_IMPORT_DISK, LEAD_IMPORT_MAX_FILE_KB, LEAD_IMPORT_MAX_ROWS, LEAD_IMPORT_CHUNK_SIZE, LEAD_IMPORT_FILE_RETENTION_DAYS
+LEAD_EXPORT_DISK, LEAD_EXPORT_RETENTION_DAYS, LEAD_EXPORT_CHUNK_SIZE
 
 # Auth
-SANCTUM_STATEFUL_DOMAINS, SESSION_DOMAIN, TOKEN_EXPIRY_DAYS
+SANCTUM_STATEFUL_DOMAINS, SANCTUM_TOKEN_PREFIX, SESSION_DOMAIN, TOKEN_EXPIRY_DAYS
+AUTH_RESET_TOKEN_EXPIRE_MINUTES, AUTH_TIMEBOX_MICROSECONDS
+
+# Session cookie — `crm:production-check` FAILS on any other value
+SESSION_SECURE_COOKIE=true, SESSION_HTTP_ONLY=true, SESSION_SAME_SITE=lax
+
+# Mail — password reset is the ONLY account-recovery path (SEC-AUTH-06)
+MAIL_MAILER, MAIL_HOST, MAIL_PORT, MAIL_USERNAME, MAIL_PASSWORD
+MAIL_FROM_ADDRESS, MAIL_FROM_NAME
+
+# Transport & browser security (SEC-OPS-02, T-30, T-39)
+TRUSTED_PROXIES
+SECURITY_HEADERS_ENABLED, SECURITY_FRAME_OPTIONS, SECURITY_REFERRER_POLICY
+SECURITY_CROSS_DOMAIN_POLICIES, SECURITY_PERMISSIONS_POLICY
+SECURITY_HSTS_ENABLED, SECURITY_HSTS_MAX_AGE, SECURITY_HSTS_INCLUDE_SUBDOMAINS, SECURITY_HSTS_PRELOAD
+SECURITY_CSP_ENABLED, SECURITY_CSP_REPORT_ONLY, SECURITY_CSP_REPORT_URI, SECURITY_CSP_CDN_HOSTS, SECURITY_CSP_ALLOW_INLINE
+
+# Operational thresholds
+QUEUE_BACKLOG_ALERT_MINUTES, ATTENDANCE_STALE_AFTER_MINUTES
+RATE_LIMIT_AUTH, RATE_LIMIT_STANDARD, RATE_LIMIT_BULK, RATE_LIMIT_WEBHOOK
 
 # Providers  (never committed — SEC-CFG-01)
 MAILERCLOUD_API_KEY, MAILERCLOUD_FROM_EMAIL, MAILERCLOUD_WEBHOOK_SECRET
@@ -158,13 +178,28 @@ One cron entry drives everything ([ARCHITECTURE §8](ARCHITECTURE.md#8-scheduler
 * * * * * cd /path/to/backend && php artisan schedule:run >> /dev/null 2>&1
 ```
 
-Verify after every deploy that this cron exists — a missing entry silently stops follow-up reminders, overdue-payment marking, scheduled campaigns, and recording purges. Nothing errors; work simply never happens. Add an uptime/heartbeat check on the scheduler.
+Verify after every deploy that this cron exists — a missing entry silently stops follow-up reminders, overdue-payment marking, scheduled campaigns, and recording purges. Nothing errors; work simply never happens. Poll `GET /api/v1/health/scheduler` from your uptime monitor (**not** `/up/scheduler`, which does not exist — see API_DOCUMENTATION §10A).
 
-Registered so far (`routes/console.php`):
+**Registered** (`routes/console.php`) — **corrected 2026-08-28**: this table named one command; ten are
+actually registered, several pay- or compliance-affecting:
 
 | Command | When | Consequence if the cron is missing |
 |---------|------|------------------------------------|
+| `crm:scheduler-heartbeat` | every minute | Nothing else in this table has a way to detect its own absence without this one — it is the signal every other row's "missing cron" consequence depends on being noticed at all |
+| `crm:process-follow-ups` | every minute | Follow-up reminders never fire and overdue follow-ups are never flagged `Missed` (FR-FUP-01/03) |
+| `crm:dispatch-scheduled-campaigns` | every minute | A campaign scheduled for a future time stays `scheduled` forever while every screen claims it is going out — indistinguishable from success until someone checks (FR-CAMP-02) |
 | `leads:purge-import-files` | daily 03:30 | Uploaded lead files — bulk PII — are kept indefinitely. A retention failure that nothing surfaces (SEC-PII-05) |
+| `leads:purge-export-files` | daily 03:30 | Generated export CSVs — the whole lead database per file — are kept indefinitely. `expires_at` stops the download but deletes nothing (SEC-PII-04/05). `--dry-run` reports without deleting |
+| `crm:purge-recordings` | daily 03:30 | Call recordings are kept past their retention period (BR-REC-02, SEC-PII-05) |
+| `crm:decay-lead-scores` | daily 04:15 | Lead scores never decay; a lead that went cold months ago still reads Hot (BR-SCORE-01, BR-TEMP-02) |
+| `crm:aggregate-daily-reports` | daily 04:45 | `report_daily_aggregates` is never written; every report request for a past period falls back to a live scan forever instead of just until the next run (FR-RPT-05) |
+| `crm:mark-overdue-payments` | daily 06:00 | Payments due in the past never flip to `overdue`; collections reporting silently under-counts (BR-PAY-06) |
+| `crm:close-stale-work-sessions` | every 15 min | A session nobody logged out of stays open indefinitely, and open time counts up to `now()` — the number that feeds telecaller reports and therefore pay grows on its own with nobody at the desk |
+
+⚠️ **`crm:production-check` is deliberately not on this list.** It is built (Phase 29) and checks queue
+backlog and `failed_jobs`, but it is a **manual/deploy-script command**, not scheduled — run it as the
+last step of a deploy (§6) or point a separate monitoring job at it yourself; `schedule:run` never
+calls it on its own. See ARCHITECTURE §8.
 
 ## 6. Deploy Sequence
 
@@ -217,8 +252,10 @@ Registered so far (`routes/console.php`):
 - [ ] All provider credentials set as production (not sandbox) and verified
 - [ ] Every webhook URL registered with each provider and signature verification confirmed
 - [ ] TLS + HSTS + security headers (SEC-OPS-02)
+- [ ] `TRUSTED_PROXIES` pinned to the load balancer's address on any host that is **not** the shared-hosting target — `*` there lets a client set its own `X-Forwarded-For`, and that is the IP the rate limiter and every audit row are keyed on (T-30)
+- [ ] `MAIL_MAILER` is a real transport and `MAIL_FROM_ADDRESS` is set — password reset is the only account-recovery path, and an empty from-address stops every message before it is sent (SEC-AUTH-06)
 - [ ] DB user least-privilege (SEC-OPS-04)
-- [ ] Recordings on a **private** disk; signed URLs verified as expiring
+- [ ] Recordings, lead **imports** and lead **exports** on **private** disks; signed URLs verified as expiring (an export is the whole lead database in one file — SEC-PII-04)
 - [ ] Supervisor workers running for all four groups; `queue:restart` in the deploy script
 - [ ] Scheduler cron installed and heartbeat-monitored
 - [ ] Backups running; **restore tested**
@@ -226,6 +263,8 @@ Registered so far (`routes/console.php`):
 - [ ] Rate limits active
 - [ ] Log redaction of PII/secrets confirmed (SEC-PII-03)
 - [ ] DNC test matrix green against production config
+
+`php artisan crm:production-check` automates most of the list above and exits non-zero on any failure, so a deploy script can end with `php artisan crm:production-check || exit 1`. It is not a substitute for the items it cannot see from inside the application — provider credentials, webhook registration, backups.
 
 ## 11. Open Decisions
 

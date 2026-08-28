@@ -8,11 +8,13 @@ use App\Enums\LeadStatus;
 use App\Enums\Permission;
 use App\Enums\StatusSource;
 use App\Exceptions\ApiException;
+use App\Models\AuditLog;
 use App\Models\Lead;
 use App\Models\LeadStatusHistory;
 use App\Models\User;
 use App\Services\Dnc\DncService;
 use App\Services\Payments\PaymentService;
+use App\Services\Sales\OpportunityService;
 use App\Services\Sales\SaleService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
@@ -26,10 +28,11 @@ use Illuminate\Support\Facades\DB;
  * assignment (SEC-IN-06) - a status that could be set by a PATCH body would
  * make the matrix decorative.
  *
- * Three things happen on every accepted change, in one transaction: the lead
- * moves, an append-only history row is written (BR-STAT-03), and the timeline
- * gets an entry (FR-LEAD-09). A status change that logged nothing would leave
- * a disputed conversion unanswerable.
+ * Four things happen on every accepted change, in one transaction: the lead
+ * moves, an append-only history row is written (BR-STAT-03), the timeline gets
+ * an entry (FR-LEAD-09), and the compliance trail gets one (SEC-AUD-02). A
+ * status change that logged nothing would leave a disputed conversion
+ * unanswerable.
  */
 class LeadStatusService
 {
@@ -38,6 +41,7 @@ class LeadStatusService
         private readonly DncService $dnc,
         private readonly SaleService $sales,
         private readonly PaymentService $payments,
+        private readonly OpportunityService $opportunities,
     ) {}
 
     /**
@@ -64,6 +68,7 @@ class LeadStatusService
 
         $this->guardArchived($lead);
         $this->guardTransition($current, $target);
+        $this->guardProposal($target, $lead);
         $this->guardConverted($target, $lead);
         $this->guardReopen($current, $actor, $reason);
 
@@ -95,6 +100,42 @@ class LeadStatusService
                     'reason' => $reason,
                 ],
             );
+
+            /*
+             * SEC-AUD-02 names lead status changes among the minimum audited
+             * events, and until now none were recorded: the only automatic
+             * audit path is the permission middleware, which logs the
+             * PERMISSION exercised, and `leads.update` is not audited - so
+             * every conversion in the system was invisible to the compliance
+             * trail.
+             *
+             * Written here rather than on the route because a status change is
+             * not an HTTP event: the Interest Engine, the scheduler and the
+             * Meta webhook all reach this method, and a route-level record
+             * would have missed all three (BR-STAT-03 keeps the operational
+             * history; this is the trail that outlives the lead, SEC-AUD-04).
+             *
+             * The lead is named by id only. Its name and phone belong to the
+             * lead record, not to a log read by a wider audience (SEC-PII-03).
+             */
+            AuditLog::create([
+                'user_id' => $actor?->id,
+                'action' => 'status_changed',
+                'auditable_type' => Lead::class,
+                'auditable_id' => $lead->id,
+                'old_values' => ['status' => $current->value],
+                'new_values' => [
+                    'status' => $target->value,
+                    'source' => $source->value,
+                    'reason' => $reason,
+                ],
+                'description' => sprintf(
+                    'Lead #%d moved from %s to %s',
+                    $lead->id,
+                    $current->label(),
+                    $target->label(),
+                ),
+            ]);
 
             /*
              * BR-DNC-07: `Not Interested` writes suppression automatically.
@@ -134,6 +175,7 @@ class LeadStatusService
         try {
             $this->guardArchived($lead);
             $this->guardTransition($lead->status, $target);
+            $this->guardProposal($target, $lead);
             $this->guardConverted($target, $lead);
             // A reason is supplied at call time, so it is not knowable here;
             // authority is.
@@ -197,6 +239,38 @@ class LeadStatusService
                 ),
                 'is_terminal' => $current->isTerminal(),
             ],
+        );
+    }
+
+    /**
+     * `Proposal` requires an open Opportunity with products and a value
+     * (BR-SALE-01).
+     *
+     * `OpportunityService::hasProposableOpportunity()` was written for this
+     * caller and said so in its docblock, but nothing ever asked it - so a lead
+     * could sit at `Proposal` with no deal behind it, which is a pipeline
+     * report counting proposals nobody has costed.
+     *
+     * Applied to system changes too. BR-STAT-04's product propagation would
+     * otherwise be the way round it: marking a product's interest `proposal`
+     * pulls the lead forward, and exempting that path would let the rule be
+     * satisfied by editing a product instead of opening a deal. The propagation
+     * caller already treats a refused advance as "not yet", not as an error.
+     */
+    private function guardProposal(LeadStatus $target, ?Lead $lead = null): void
+    {
+        if ($target !== LeadStatus::Proposal || $lead === null) {
+            return;
+        }
+
+        if ($this->opportunities->hasProposableOpportunity($lead)) {
+            return;
+        }
+
+        throw new ApiException(
+            ErrorCode::LeadInvalidStatusTransition,
+            'A lead reaches Proposal once there is an open opportunity with at least one product and a value.',
+            context: ['to' => LeadStatus::Proposal->value, 'requires' => 'opportunity'],
         );
     }
 

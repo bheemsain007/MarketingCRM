@@ -17,17 +17,61 @@ use Tests\TestCase;
  * names the example did not use - `WHATSAPP_TOKEN` against a documented
  * `WHATSAPP_API_KEY` - so an operator would have filled in the documented key
  * and the application would never have read it. No error, no log line.
+ *
+ * It happened a second time, to this test itself: it scanned two config files by
+ * name, so every SECURITY_* key in config/security.php was undocumented and it
+ * still reported PASS. It now scans all of config/ - see stockKeysFor().
  */
 class EnvExampleTest extends TestCase
 {
-    private const CONFIG_FILES = [
-        'config/crm.php',
-        'config/providers.php',
-    ];
-
     private function example(): string
     {
         return file_get_contents(base_path('.env.example'));
+    }
+
+    /** @return array<int, string> absolute paths to every config file */
+    private function configFiles(): array
+    {
+        return glob(config_path('*.php')) ?: [];
+    }
+
+    /** @return array<int, string> */
+    private function envKeysIn(string $path): array
+    {
+        preg_match_all(
+            '/env\([\'"]([A-Z0-9_]+)[\'"]/',
+            (string) file_get_contents($path),
+            $matches,
+        );
+
+        return $matches[1];
+    }
+
+    /**
+     * Keys the framework reads in ITS OWN copy of the same config file.
+     *
+     * The scan below covers every file in config/, because a hand-written list
+     * of two files was how fifteen undocumented keys in config/security.php
+     * survived: a scan with a blind spot reports PASS from inside it.
+     *
+     * But most of config/ is Laravel's skeleton, carrying driver options for
+     * drivers this application does not use - DYNAMODB_ENDPOINT, SQS_SUFFIX,
+     * BEANSTALKD_QUEUE_RETRY_AFTER. Requiring those would add ninety blank lines
+     * to `.env.example`, and a blank line is not harmless: an empty value
+     * overrides the default instead of falling through to it, so `DB_CHARSET=`
+     * would break every fresh install and `MAIL_FROM_ADDRESS=` already killed
+     * all mail. So a key is exempt only while the framework's own fallback copy
+     * of that file reads it too. The moment this project's copy diverges - a key
+     * added, or renamed, or given an env() the framework hardcodes - it belongs
+     * to this project and has to be written down.
+     *
+     * @return array<int, string>
+     */
+    private function stockKeysFor(string $file): array
+    {
+        $stock = base_path('vendor/laravel/framework/config/'.basename($file));
+
+        return is_file($stock) ? $this->envKeysIn($stock) : [];
     }
 
     /** @return array<string, string> key => the config file that reads it */
@@ -35,19 +79,38 @@ class EnvExampleTest extends TestCase
     {
         $keys = [];
 
-        foreach (self::CONFIG_FILES as $file) {
-            preg_match_all(
-                '/env\([\'"]([A-Z0-9_]+)[\'"]/',
-                file_get_contents(base_path($file)),
-                $matches,
-            );
+        foreach ($this->configFiles() as $file) {
+            $stock = array_flip($this->stockKeysFor($file));
 
-            foreach ($matches[1] as $key) {
-                $keys[$key] = $file;
+            foreach ($this->envKeysIn($file) as $key) {
+                if (! array_key_exists($key, $stock)) {
+                    $keys[$key] = 'config/'.basename($file);
+                }
             }
         }
 
         return $keys;
+    }
+
+    #[Test]
+    public function the_scan_reaches_every_config_file_and_not_just_the_two_it_used_to_list(): void
+    {
+        // The exemption is derived from the framework's own files, so it cannot
+        // rot into a hand-maintained allow-list - but it does depend on those
+        // files being there. Without them every key looks like ours, which fails
+        // loudly rather than quietly, and this says why.
+        $this->assertDirectoryExists(base_path('vendor/laravel/framework/config'));
+
+        $referenced = $this->referencedKeys();
+
+        // config/security.php sat outside the old two-file list, which is
+        // precisely how its keys went undocumented while this test passed.
+        $this->assertArrayHasKey('SECURITY_HEADERS_ENABLED', $referenced);
+        $this->assertArrayHasKey('TRUSTED_PROXIES', $referenced);
+
+        // ...and a stock driver option in a stock file stays out, because
+        // documenting it as a blank line would override the default it has.
+        $this->assertArrayNotHasKey('SQS_SUFFIX', $referenced);
     }
 
     #[Test]
@@ -95,6 +158,24 @@ class EnvExampleTest extends TestCase
 
         $this->assertSame([], $filled, 'These look like credentials and are not empty: '.implode(', ', $filled));
         $this->assertNotEmpty($rows, 'Expected the example to declare provider credential keys.');
+    }
+
+    #[Test]
+    public function the_from_address_carries_a_real_value(): void
+    {
+        /*
+         * The one key in this file that must NOT be blank (SEC-AUTH-06).
+         *
+         * `MAIL_FROM_ADDRESS=` resolves to '' and does not fall through to
+         * config/mail.php's default, and Symfony refuses to build a message with
+         * no From header - so an empty line here silently disables password
+         * reset, which is the only way back into an account in this application.
+         */
+        $this->assertMatchesRegularExpression(
+            '/^MAIL_FROM_ADDRESS=\S+@\S+$/m',
+            $this->example(),
+            'MAIL_FROM_ADDRESS must carry a real address; empty kills every mail the app sends.',
+        );
     }
 
     #[Test]

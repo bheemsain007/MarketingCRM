@@ -57,6 +57,20 @@ class LeadExport extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    /**
+     * Rows whose download window has closed - what the retention sweep deletes
+     * (SEC-PII-05).
+     *
+     * Reads the STORED `expires_at` rather than re-deriving it from
+     * `completed_at` plus the current config, so shortening the retention later
+     * cannot retroactively re-date exports generated under the old policy
+     * (the same reasoning as `CallRecording::scopeExpired()`).
+     */
+    public function scopeExpired($query)
+    {
+        return $query->whereNotNull('expires_at')->where('expires_at', '<=', now());
+    }
+
     public function isFinished(): bool
     {
         return $this->status->isFinished();

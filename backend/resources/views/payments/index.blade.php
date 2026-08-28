@@ -90,10 +90,22 @@ $(function () {
 
     let page = 1;
 
+    /*
+        Filters go under filter[...] because that is the only place the list
+        convention reads them (API_DOCUMENTATION §4) - sent flat they were
+        silently ignored and both selects did nothing. A blank select is
+        omitted entirely rather than sent empty: an unknown or empty filter is
+        answered with a 422, not shrugged off.
+    */
     function params() {
         const p = { page: page };
-        if ($('#f-status').val()) p.status = $('#f-status').val();
-        if ($('#f-method').val()) p.method = $('#f-method').val();
+        const filter = {};
+
+        if ($('#f-status').val()) filter.status = $('#f-status').val();
+        if ($('#f-method').val()) filter.method = $('#f-method').val();
+
+        if (Object.keys(filter).length) p.filter = filter;
+
         return p;
     }
 
