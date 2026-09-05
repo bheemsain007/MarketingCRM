@@ -207,7 +207,7 @@ This system stores substantial personal data: names, phone numbers, emails, and 
 | SEC-OPS-02 | Security headers: HSTS, `X-Content-Type-Options`, `X-Frame-Options`/frame-ancestors, Referrer-Policy, CSP *(CSP scope to confirm — jQuery/Bootstrap inline usage may need care)* |
 | SEC-OPS-03 | Generic error responses; stack traces and SQL never returned to clients (NFR-08) |
 | SEC-OPS-04 | DB user holds least privilege — no `DROP`/`GRANT` in application credentials |
-| SEC-OPS-05 | ✅ Backups encrypted (APP_KEY, via `crm:backup`), restore mechanism tested 2026-09-06 (`crm:restore`, `tests/Feature/Ops/BackupRestoreDrillTest.php`, DEPLOYMENT §8) — a real drill matched every table row-for-row and checksummed identical. Still open: repeating the drill against the actual production host once one exists, and point-in-time recovery (binlog-based, not built) |
+| SEC-OPS-05 | ✅ Backups encrypted (APP_KEY, via `crm:backup`), restore mechanism tested 2026-09-06 (`crm:restore`, `tests/Feature/Ops/BackupRestoreDrillTest.php`, DEPLOYMENT §8) — a real drill matched every table row-for-row and checksummed identical, **then repeated cross-engine against a real MySQL 8.4.9 instance** (the pinned production engine, T-02) with the same result — every table, sample rows and aggregates matched. Still open: repeating the drill against the actual production host once one exists, and point-in-time recovery (binlog-based, not built) |
 | SEC-OPS-06 | Rate limiting per [API §7](API_DOCUMENTATION.md#7-rate-limiting) |
 
 ---
