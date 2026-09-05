@@ -67,6 +67,24 @@ return [
             'report' => false,
         ],
 
+        /*
+         * Database backups (SEC-OPS-05). Every file here is encrypted with the
+         * app's own APP_KEY before it touches disk (`crm:backup`), so this disk
+         * being private is a second layer, not the only one - a leaked backup
+         * file is still unreadable without APP_KEY. `BACKUP_DISK` can repoint
+         * this at s3 for real off-site storage without any code change; a local
+         * disk on the same host as the database it backs up is not a real
+         * disaster-recovery story, only a rehearsal of the mechanism.
+         */
+        'backups' => [
+            'driver' => 'local',
+            'root' => storage_path('app/backups'),
+            'visibility' => 'private',
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         's3' => [
             'driver' => 's3',
             'key' => env('AWS_ACCESS_KEY_ID'),

@@ -141,3 +141,18 @@ Schedule::command('crm:purge-recordings')
 Schedule::command('crm:aggregate-daily-reports')
     ->dailyAt('04:45')
     ->withoutOverlapping();
+
+/*
+ * Database backup (SEC-OPS-05, DEPLOYMENT §8). Early morning and off any other
+ * sweep's minute so a slow mysqldump on a large database does not compete with
+ * the report aggregation run above for I/O. `withoutOverlapping` because a
+ * second dump starting before the first finishes writing is exactly the
+ * "backup taken mid-write" scenario --single-transaction exists to avoid.
+ */
+Schedule::command('crm:backup')
+    ->dailyAt('02:00')
+    ->withoutOverlapping();
+
+Schedule::command('crm:purge-backups')
+    ->dailyAt('02:30')
+    ->withoutOverlapping();

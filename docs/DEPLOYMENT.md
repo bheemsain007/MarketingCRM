@@ -229,9 +229,11 @@ calls it on its own. See ARCHITECTURE §8.
 
 | Item | Policy |
 |------|--------|
-| MySQL | Automated daily full + binlog/point-in-time recovery; encrypted at rest |
+| MySQL | `crm:backup` (scheduled daily at 02:00, `routes/console.php`) — `mysqldump --single-transaction` piped straight into `Crypt::encryptString()` (APP_KEY) before it ever touches disk, written to the private `backups` disk. `crm:purge-backups` (02:30 daily) removes files past `BACKUP_RETENTION_DAYS` (default 30) |
+| Point-in-time recovery | Not built — `crm:backup` is full-dump-only. Binlog-based PITR is a separate mechanism (`mysqlbinlog` + a retained binlog stream) and needs a decision on where binlogs are shipped to; open |
 | Recordings | Backed up per retention policy (BR-REC-02); never backed up beyond retention, or the purge is meaningless |
-| Restore drill | Tested before production go-live (Phase 29) — an untested backup is not a backup |
+| Restore drill | ✅ **Mechanism built and verified 2026-09-06**, not merely policy: `crm:restore {file} --database=<target> --force` decrypts and restores a `crm:backup` file. A real drill was run against this project's own dev database — backup, restore into a scratch database, then every one of 57 tables' row counts compared and a `CHECKSUM TABLE` on `leads` matched bit-for-bit; `tests/Feature/Ops/BackupRestoreDrillTest.php` repeats this automatically on every test run (backup → restore into a throwaway database → compare row counts and a specific row's content → assert the `migrations` table itself survived, proving schema metadata restored, not just data). **What this does NOT yet prove**: that the *production* host's mysqldump/mysql binaries, disk, and off-site storage work the same way — the mechanism is proven, not the production environment it will eventually run in. Re-run the drill once a production host exists |
+| Restore needs its own DB user | `crm:restore` needs `CREATE`/`DROP`/`ALTER` — genuinely more than the application's own least-privilege `crm_user` should ever hold (SEC-OPS-04). Set `BACKUP_DB_USERNAME`/`BACKUP_DB_PASSWORD` to a separate, privileged DBA credential in production; it falls back to `DB_USERNAME`/`DB_PASSWORD` only so an unconfigured restore fails loudly with the database's own permission error rather than silently |
 
 ## 9. Monitoring & Alerts
 
