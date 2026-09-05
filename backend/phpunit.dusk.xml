@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+>
+    <testsuites>
+        <testsuite name="Browser">
+            <directory>tests/Browser</directory>
+        </testsuite>
+    </testsuites>
+    <source>
+        <include>
+            <directory>app</directory>
+        </include>
+    </source>
+    <php>
+        <!--
+            These <env> entries only cover the PHPUnit process itself. The
+            browser talks to a SEPARATE `php artisan serve` process, which
+            reads .env directly - `php artisan dusk` puts .env.dusk.local
+            there for the duration of the run (DuskCommand::setupDuskEnvironment).
+            The values below are asserted to match .env.dusk.local, not a
+            replacement for it: if this file and .env.dusk.local disagree on
+            DB_DATABASE, the PHPUnit process and the served app end up
+            reading and writing two different databases, and every assertion
+            here would be checking data the browser never touched. See
+            .env.dusk.local's header comment for why this is a fourth,
+            Dusk-only database rather than one of the parallel suite's.
+        -->
+        <env name="APP_ENV" value="local"/>
+        <env name="DB_CONNECTION" value="mysql"/>
+        <env name="DB_HOST" value="127.0.0.1"/>
+        <env name="DB_PORT" value="3306"/>
+        <env name="DB_DATABASE" value="marketing_crm_dusk"/>
+        <env name="DB_USERNAME" value="root"/>
+        <env name="DB_PASSWORD" value=""/>
+        <env name="APP_URL" value="http://127.0.0.1:8000"/>
+        <env name="QUEUE_CONNECTION" value="sync"/>
+        <env name="SESSION_DRIVER" value="database"/>
+        <env name="CACHE_STORE" value="database"/>
+        <env name="MAIL_MAILER" value="log"/>
+    </php>
+</phpunit>

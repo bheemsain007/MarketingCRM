@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Last updated** | 2026-08-28 (reconciliation pass: T-09 2FA, T-34 gateway choice and T-59 payment links closed — all three were built 2026-08-13 and this file still showed them open) |
-| **Current position** | Every server-side phase is built. Phase 29 (production hardening) and Phase 23's gateway half shipped 2026-08-13, closing T-09/T-34/T-59; Phase 30 (Flutter) and Phase 31 (Android calling, via the native dialer) shipped the same day. **Backend: 1,117 tests / 3,764 assertions passing; Flutter: 119 passing** (TESTING §7, 2026-08-28) — T-48 worked around. What is left: Web CRM testing/production go-live (28/29 — code is done, the deploy is not), Phase 14's WhatsApp template-message and inbound-reply gap, and the **device** half of call recording (32/33), still blocked on T-44 and ADR-B |
+| **Current position** | Every server-side phase is built. Phase 29 (production hardening) and Phase 23's gateway half shipped 2026-08-13, closing T-09/T-34/T-59; Phase 30 (Flutter) and Phase 31 (Android calling, via the native dialer) shipped the same day; Phase 34 (Flutter test strategy) closed 2026-09-05. **Backend: 1,117 tests / 3,764 assertions passing; Flutter: 127 passing** (TESTING §7/§9) — T-48 worked around. What is left: Web CRM testing/production go-live (28/29 — code is done, the deploy is not), Phase 14's WhatsApp template-message and inbound-reply gap, and the **device** half of call recording (32/33), still blocked on T-44 and ADR-B |
 | **Open items** | 42 of 66 (mechanically recounted 2026-08-28 from every `T-nn` row in this file; the previous "49 of 55" predates T-46..T-66 and had not been updated to match) |
 
 Every task has a **stable ID (`T-nn`)**. IDs are never reused or renumbered — a completed task keeps its number and moves to §1, so "T-14 is done" means the same thing in six months. Reference them in commits and phase reports.
@@ -108,8 +108,8 @@ Items are grouped by **when an answer is actually needed**, not by topic. Only T
 |----|------|-----------|
 | **T-40** | Lead custom fields — JSON column vs. EAV | Not requested; defer until asked |
 | **T-41** | Partitioning/archival for `messages` and `calls` at volume | Phase 29 |
-| **T-42** | Browser/E2E testing tool for Web CRM (Dusk?) | Phase 28 |
-| **T-43** | Load-test targets for campaign throughput and dashboard response | Phase 28 (FR-RPT-05) |
+| ~~**T-42**~~ | ~~Browser/E2E testing tool for Web CRM (Dusk?)~~ | ✅ **Built 2026-09-05.** Laravel Dusk - chosen because it drives a real Chrome against this app's own Laravel routes with no separate device/grid infrastructure, which is all T-42 actually asked for. 12 tests in a new `tests/Browser/` directory, a dedicated `marketing_crm_dusk` database, confirmed running with real command output (TESTING §10). Not wired into CI yet (no git remote exists for any workflow to run against - same caveat as Phase 34/TESTING §9.5) |
+| ~~**T-43**~~ | ~~Load-test targets for campaign throughput and dashboard response~~ | ✅ **Measured 2026-09-05** with a reusable harness (`php artisan crm:load-test`, `tools/loadtest/`) — real numbers, not estimates. See [LOAD_TEST_RESULTS.md](LOAD_TEST_RESULTS.md) for full methodology. **Dashboard (FR-RPT-05): the <2s budget holds comfortably** — worst observed request 489.1ms at six months of realistic volume (181 days, ~10,860 leads), and pre-aggregation measurably helps (296ms avg for a fully-past period vs 407ms avg for one touching today, ~37% faster). **Campaign fan-out: FR-CAMP-05's literal text holds** (dispatch is queue-only, so no audience size can produce an HTTP timeout), **but throughput does not confirm the design is fast at the 50,000-lead reference scale `DispatchCampaign`/`CampaignService` both cite**: measured ~25-31 recipients/s on the actual production queue driver (`database`, not Redis) across two independent, error-free 3,000/5,000-lead runs, extrapolating to **~27-34 minutes** to fully drain 50,000 with one worker (a floor, not a ceiling — see the report's caveats; staffing 3-4 workers per DEPLOYMENT §4 should bring this under 15 minutes, pending a direct multi-worker measurement). This is better than DEPLOYMENT §3A's own unmeasured prediction of "hours," confirming **T-30's question is real and now has a number attached to it**. One genuine, fixable risk surfaced: the `jobs` table's default migration indexes only `queue`, not `reserved_at` (a plausible bottleneck as backlog grows, independent of any Redis decision). **A second apparent finding — "this machine's MariaDB is fragile under load" — was investigated and retracted**: it was two concurrent `crm:load-test` runs sharing one disposable database, not the database engine; fixed structurally by adding a `GET_LOCK`-based concurrency guard to the harness itself (LOAD_TEST_RESULTS.md §6) rather than left as an unresolved environment caveat |
 | **T-44** | 🔴 Android call-recording feasibility test on real devices | ⚠️ **Now blocking.** Android 10+ blocks third-party call recording on most modern phones, and both ADR-B and Phase 11 rest on it working. Phases 9 and 10 were built around the question; Phase 11 cannot be. Needs a physical handset — put a test build on two or three real devices and confirm whether the audio is actually capturable |
 | ~~**T-46**~~ | ~~Web CRM screens not yet built~~ | ✅ **Closed 2026-08-11.** All twelve screens exist: shell, dashboard, leads list/detail, lead create/edit, assignments, account, DNC, settings, users, dialer, imports, products. The only UI still outstanding is the Chart.js report dashboards, tracked separately as T-60 |
 | **T-55** | 🔒 BhashSMS puts credentials in a URL query string | Their documented API is plain HTTP with `user` and `pass` as query parameters. **Mitigated, not solved**: the driver forces HTTPS, so they are no longer in the clear on the wire, but a query string still lands in the provider's own access logs and any intermediary that terminates TLS. Ask BhashSMS whether they support POST-body or header auth. If not, treat that account's password as low-trust and rotate it on a schedule (SEC-CFG-04) |
@@ -148,13 +148,13 @@ are built.
 
 **What is left:**
 - **Phases 28/29** — Web CRM testing and production go-live. Phase 29's code is done (2FA, security
-  headers, `crm:production-check`); what remains is an E2E tool choice (T-42) and the deploy itself —
-  DNS, TLS, the cron entry, real Razorpay keys — which is a server operation rather than a build.
+  headers, `crm:production-check`); Phase 28's E2E tool choice is built (T-42, Dusk, 12 tests -
+  TESTING §10) and its load-test question is answered (T-43, LOAD_TEST_RESULTS.md). What remains is
+  Phase 28's CI wiring, plus Phase 29's deploy itself — DNS, TLS, the cron entry, real Razorpay keys —
+  which is a server operation rather than a build.
 - **Phase 33** — offline sync. The queue mechanism FR-REC-02 asks for is built and live (part of the
   Phase 30 client), but wired to call-outcome writes, not recording uploads — there is nothing to
   upload until Phase 32 exists.
-- **Phase 34** — a dedicated Flutter test-strategy phase. The 119 tests that exist belong to Phases
-  30/31.
 - **Phase 32** — device call recording. Blocked on **T-44** (a physical-handset recording test) alone
   now; ADR-B's calling half is resolved (Phase 31) and does not reopen depending on T-44's answer.
 - **Phase 35/36** — release, and the SaaS/white-label option `tenant_id` was reserved for.

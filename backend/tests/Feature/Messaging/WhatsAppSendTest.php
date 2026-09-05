@@ -32,6 +32,12 @@ use Tests\TestCase;
  * retried. The shared DNC gate is proved for this channel too, because a send
  * path that could reach a suppressed lead is the worst defect in the system
  * (TESTING §4.1).
+ *
+ * `queueWhatsApp()` seeds a recent inbound message for the lead before every
+ * send, so the wire-format/response tests below are all inside the 24-hour
+ * customer-service window and exercise the unchanged `type: text` path
+ * (FR-WA-01 regression). The window gate itself - text inside, template or
+ * refusal outside - is `WhatsAppTemplateWindowTest`.
  */
 class WhatsAppSendTest extends TestCase
 {
@@ -68,16 +74,31 @@ class WhatsAppSendTest extends TestCase
         );
     }
 
+    /** Opens the 24-hour customer-service window (FR-WA-01): the lead messaged in recently. */
+    private function openWindow(Lead $lead): void
+    {
+        Message::factory()->create([
+            'lead_id' => $lead->id,
+            'channel' => Channel::WhatsApp->value,
+            'direction' => 'inbound',
+            'status' => 'received',
+            'recipient' => $lead->phone_e164,
+            'body' => 'Sure, tell me more.',
+            'sent_at' => now()->subHours(2),
+        ]);
+    }
+
     private function queueWhatsApp(Lead $lead): Message
     {
         Queue::fake();
+        $this->openWindow($lead);
 
         $this->postJson("/api/v1/leads/{$lead->id}/messages", [
             'channel' => Channel::WhatsApp->value,
             'body' => 'Your order has shipped.',
         ])->assertStatus(202);
 
-        return Message::where('lead_id', $lead->id)->firstOrFail();
+        return Message::where('lead_id', $lead->id)->where('direction', 'outbound')->firstOrFail();
     }
 
     // -----------------------------------------------------------------------

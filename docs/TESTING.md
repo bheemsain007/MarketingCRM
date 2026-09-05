@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Version** | 1.2 |
-| **Last updated** | 2026-08-28 |
-| **Status** | **A large suite exists and is green.** Backend: **1,117 tests / 3,764 assertions passing** (§7, confirmed 2026-08-28). Flutter: **119 tests passing**. *(This line described the pre-Phase-3 state — "no test suite exists" — until now; it had not been touched since 2026-08-10 despite MODULE_STATUS's Definition of Done making a recorded result here the precondition for marking any phase Done, NFR-09.)* |
+| **Version** | 1.3 |
+| **Last updated** | 2026-09-05 |
+| **Status** | **A large suite exists and is green.** Backend: **1,117 tests / 3,764 assertions passing** (§7, confirmed 2026-08-28). Flutter: **127 tests passing** (§9, Phase 34 — up from 119: +8 closing gaps a coverage audit found cheap and worth closing now). *(This line described the pre-Phase-3 state — "no test suite exists" — until now; it had not been touched since 2026-08-10 despite MODULE_STATUS's Definition of Done making a recorded result here the precondition for marking any phase Done, NFR-09.)* |
 | **Related** | [PROJECT_REQUIREMENTS.md](PROJECT_REQUIREMENTS.md) · [BUSINESS_RULES.md](BUSINESS_RULES.md) · [MODULE_STATUS.md](MODULE_STATUS.md) |
 
 ---
@@ -225,6 +225,8 @@ Updated at the end of every phase, alongside the phase completion report.
 | Lead export, attendance, pre-aggregation, notification triggers | 2026-08-27 | — | — | 0 | — | New `Feature\Leads\LeadExportTest`, `Feature\Attendance\*`, `Feature\Reports\ReportPreAggregationTest`, `Feature\Notifications\NotificationTriggersTest` |
 | Nine Web CRM screens | 2026-08-27 | — | — | 0 | — | Templates, notifications, cross-lead follow-up/call/message history, DNC skip log, tag management, plus lead-page score/archive/recording/AI-call/interest controls |
 | **Everything to date** | **2026-08-28** | **1,117 (3,764 assertions)** | **1,117** | **0** | — | ✅ **Verified.** Backend suite, confirmed current at this reconciliation pass — three separate documents (MODULE_STATUS, TESTING, API_DOCUMENTATION) had each stated a different, older total before this pass. **Flutter: 119 (2026-08-17), 0 failing.** ⚠️ Still on MariaDB 10.4, not the pinned MySQL 8.4.9 (T-02, T-48) — good evidence, not proof against the production engine. *(The rows between "Everything to date, 2026-08-12, 720" and here are summarised from commit messages, not itemised phase-by-phase the way earlier rows are — the per-phase breakdown for this period lives in the commits' own test output, not restated here.)* |
+| Phase 34 (Flutter test strategy) | 2026-09-05 | 127 (Flutter) | 127 | 0 | — | ✅ **Verified**, `flutter test` run directly (see §9). +8 over the Phase-30/31 baseline of 119, closing the cheap-and-real gaps a coverage audit found rather than expanding the suite open-endedly: `AuthRepository.login`'s two malformed-2xx branches (no `token`, no `user` in the response) were unexercised; `LeadRepository.callability`'s `data == null` branch (a 200 that is not the envelope's data shape) failed closed correctly but had no test proving it, distinct from the already-tested offline/5xx paths; and `OutboxBanner` — the only UI surface for the Phase 33 offline queue — had no test coverage at all despite `Outbox` and `OutboxFlusher` being tested exhaustively underneath it. `flutter analyze`: no issues. Backend untouched — out of scope for this phase |
+| Phase 28 (Dusk/browser E2E) | 2026-09-05 | 12 (Dusk) | 12 | 0 | — | ✅ **Verified**, `vendor/bin/phpunit -c phpunit.dusk.xml` run directly against a real Chrome 152 + matching ChromeDriver, a real `php artisan serve`, and a dedicated `marketing_crm_dusk` database (see §10). Backend Feature/Unit suite untouched — out of scope for this phase, and deliberately not re-run (composer.json's dev dependency addition is additive) |
 
 ### Suite composition after Phase 2
 
@@ -257,4 +259,388 @@ Tests run against **MySQL** (`marketing_crm_test`), not SQLite in-memory — the
 
 ## 8. Not Yet Decided
 
-Browser/E2E testing for the Web CRM (Dusk?) · load testing targets for campaign throughput and dashboard response (FR-RPT-05) · Flutter test strategy (Phase 34) · whether to run mutation testing on the DNC service. Tracked in [TODO.md](TODO.md).
+Whether to run mutation testing on the DNC service. Tracked in [TODO.md](TODO.md). *(Load testing targets for campaign throughput and dashboard response, FR-RPT-05, moved out of this list 2026-09-05 - see [LOAD_TEST_RESULTS.md](LOAD_TEST_RESULTS.md) and TODO.md's T-43 row.)*
+
+~~Flutter test strategy (Phase 34)~~ — ✅ **written 2026-09-05, see §9.**
+
+~~Browser/E2E testing for the Web CRM (Dusk?)~~ — ✅ **built 2026-09-05, see §10.** Laravel Dusk, chosen because it was the only option that needed no separate device/grid infrastructure to answer T-42 - it drives a real Chrome against the app's own Laravel routes, which is what "does the Blade+jQuery shell actually work in a browser" needs and nothing more.
+
+## 9. Flutter Client Test Strategy (Phase 34)
+
+Phases 30/31 built the Flutter client and its first 119 tests. Neither phase asked "does this
+amount to a strategy" — they asked "does the feature I just built have tests," which is a different
+and narrower question. This section is Phase 34's actual deliverable: an audit of what a mobile CRM
+client needs covered, what of that is covered today, what gaps were real and cheap enough to close in
+this pass (closed below, +8 tests), and what gaps are real but belong to later work — named as such
+rather than left implicit.
+
+### 9.1 The pyramid, in Flutter's own vocabulary
+
+Flutter draws the same triangle the backend's §2 does, but the middle tier means something different
+on a client: a "Feature" test on the backend drives a real HTTP request through middleware; the
+equivalent here is a **widget** test, which mounts a real widget tree in a simulated binding — no
+device, no emulator — and drives it with real taps and real text entry.
+
+| Level | Location | What it exercises | Device/emulator needed? |
+|-------|----------|--------------------|:---:|
+| **Unit** | `test/core/`, `test/repositories/`, `test/state/` | `ApiClient`'s envelope/exception mapping, every repository, `Outbox`/`OutboxFlusher`, `AuthController` — against the **real** `ApiClient` and a scripted HTTP backend (`ScriptedApi`), never a mocked repository interface | No |
+| **Widget** | `test/widgets/` | Real screens (`LeadDetailScreen`, `HomeShell`, `TemplateManagementScreen`, `OutboxBanner`) mounted via `pumpApp`/`Harness`, driven with `tester.tap`/`enterText`, asserting on what is actually painted | No — `flutter_test`'s binding simulates a device without running on one |
+| **Integration** | *(does not exist yet)* | End-to-end on a real device or emulator via `package:integration_test` — the actual dial intent leaving the app, the actual `tel:` screen, actual audio capture | **Yes** |
+
+**127 of 127 tests today are Unit or Widget.** There is no `integration_test/` directory, no
+`flutter_driver` dependency, and nothing in `pubspec.yaml`'s `dev_dependencies` beyond `flutter_test`
+itself (confirmed by reading `pubspec.yaml` directly, not assumed). This is not an oversight this phase
+is closing — see §9.4. It is the honest boundary: everything this app does *except* actually placing a
+call and actually capturing audio can be, and is, proven without a device.
+
+The **Harness pattern** (`test/support/harness.dart`) is what makes the Unit tier possible without
+mocking: it wires the *real* `AppDependencies` graph — the real `ApiClient`, the real `Outbox`, the real
+`AuthController` — to fakes only at the three edges that would otherwise touch the outside world:
+`ScriptedApi` (an `http.MockClient` standing in for the network), `InMemoryTokenStore` /
+`InMemoryKeyValueStore` (standing in for device storage), and `RecordingDialer` (standing in for the OS
+`tel:` intent). A test that mocked `LeadRepository` itself, the way some Flutter suites do, would pass
+even if the envelope contract broke; this suite would not, because the real decoder sits between the
+scripted response and the assertion.
+
+### 9.2 What is covered today (127 tests, by file)
+
+| File | Tests | Covers |
+|------|:---:|--------|
+| `core/api/api_client_test.dart` | 13 | Every status-to-exception mapping (401/403/404/409/422/429/5xx), bearer header, Idempotency-Key header, malformed/HTML/`success:false` bodies, `204` |
+| `core/api/api_envelope_test.dart` | 7 | Envelope decoding, `dataMap`, field-error extraction |
+| `core/offline/outbox_test.dart` | 8 | Restart persistence, FIFO order, pending/failed counts, listener notifications, corrupt-file recovery, idempotent load |
+| `core/offline/outbox_flusher_test.dart` | 10 | Delivery, Idempotency-Key replay, 409-as-delivered, offline deferral, halt-at-first-failure (not reordering), 422 permanent-fail, **401 defers rather than permanently failing**, single-flight under concurrent triggers, connectivity-triggered flush, 5xx retry |
+| `repositories/lead_repository_test.dart` | 13 | List/search/scoping, IDOR (403), malformed list envelope, and the **callability gate** — callable, suppressed, outside-hours, stale-flag-vs-gate, offline-fails-closed, 5xx-fails-closed, **malformed-200-fails-closed** (new) |
+| `repositories/call_repository_test.dart` | 12 | Dial intent, suppressed-at-dial (not just at the check), **never queued offline** (a dial intent skipping the gate would be worse than losing it), write-once outcomes, offline queueing end to end |
+| `repositories/follow_up_repository_test.dart` | 5 | Diary read, server-default status filter, outcome completion, IDOR |
+| `repositories/message_repository_test.dart` | 8 | Every channel goes through the CRM (never a deep link), subject only on email, suppressed-lead 403, offline throws rather than queues (an ungated send must never be replayed) |
+| `state/auth_controller_test.dart` | 16 | Restore (4, incl. **malformed `/auth/me`**, new), sign-in (8, incl. **malformed login response ×2**, new), global 401 handling (1), sign-out (2) |
+| `widgets/login_flow_test.dart` | 7 | Full login → home → 401-mid-session → sign-out flow through real screens |
+| `widgets/lead_contact_actions_test.dart` | 11 | The four contact actions, suppressed-lead refusal per channel, and the **SEC-PII-04 regression guard** (below) |
+| `widgets/template_management_test.dart` | 13 | Template picker rendering server-rendered text, both permission gates (below), CRUD through the screen |
+| `widgets/outbox_banner_test.dart` | 4 | **New.** The queue's only UI surface (below) |
+
+### 9.3 The four areas this phase was asked to audit
+
+**Auth/session.** Login, session restore (`GET /auth/me` against the stored token), global 401 handling,
+and sign-out are covered at both the Unit tier (`auth_controller_test.dart`, 16 tests) and the Widget
+tier (`login_flow_test.dart`, 7 tests) — restore with no token, a good token, a revoked token, and
+offline-at-launch were all already covered before this phase. **There is no token-refresh flow, and
+that is not a gap**: this app carries a Sanctum personal access token, which does not rotate — a 401
+anywhere signs the user out (`AuthController.handleUnauthenticated`, tested), and `AuthRepository` has
+no refresh method to be missing. What genuinely had no test: `AuthRepository.login` throws
+`MalformedResponseException` itself if the `200` response is missing `token` or missing `user` — a
+defensive branch for "the server said success but sent something this app cannot use." Two tests now
+cover it. `GET /auth/me` returning a `200` with no data (the same shape of failure, on the restore path)
+now has one too.
+
+**The DNC/callability gate (ADR-B).** `GET /leads/{id}/callability` is asked before every dial and never
+answered locally (`Callability`'s own doc comment: *"it does not read `lead.is_suppressed`, it does not
+compare the clock to an office window, it does not check the phone string"*). Before this phase,
+6 tests already proved: callable, DNC-suppressed, outside-calling-hours, the denormalised
+`is_suppressed` flag losing to the gate when they disagree, offline failing closed, and a `5xx` failing
+closed. The one branch with no test was `data == null` — a `200` that is not the envelope's data shape,
+which is not an exception at all (no `NetworkException`, no `ServerException`), just a value the
+repository has to notice and refuse to trust. One test closes it. **Provider-refusal** (a suppressed
+send from an actual channel provider) is a different endpoint's concern — `POST /leads/{lead}/messages`
+— and was already covered per-channel in `lead_contact_actions_test.dart`'s "a suppressed lead is
+refused on every channel" group, which this phase re-read rather than duplicated.
+
+**The offline outbox.** `Outbox` (8 tests) and `OutboxFlusher` (10 tests) were already the most
+thoroughly tested part of this client — restart survival, FIFO ordering, the single-flight guard against
+a double-trigger flush, the halt-at-first-undeliverable-entry rule, 409-as-success, 422-as-permanent,
+and 401-as-deferred-not-discarded were all covered before this phase touched anything. What had **zero**
+coverage was `OutboxBanner` — the widget a telecaller actually sees, and the only way they know a call
+outcome is still waiting or can push it by hand. Four new tests cover it: absent when empty, showing the
+pending count after a launch-time auto-flush could not deliver, showing the *rejected* count
+distinctly for a permanently-failed entry (and proving the auto-flush does not touch it — a flusher that
+retried a 422 forever would show a growing number for something already known unfixable), and "Send
+now" actually draining the queue once the network is back.
+
+One thing the audit found but did **not** fix, because it is a product decision and not a test gap: a
+permanently-failed entry has no way to be dismissed from the app. `Outbox.discard()` exists and is
+identical to `remove()`, but nothing in `lib/` calls it — `OutboxBanner`'s only control is "Send now",
+which the flusher itself skips for a `permanentlyFailed` entry. A telecaller who gets a validation
+failure they cannot fix (say, a stale `callback_at`) is stuck looking at "1 rejected by the CRM"
+forever with no button to acknowledge it. This is real, but it is a UI feature to design and build, not
+a test to write against code that does not exist — flagged separately rather than absorbed into this
+phase's scope.
+
+**Permission-gated UI.** The audit's honest finding: this client has exactly **two** permission gates
+in the whole of `lib/`, both on templates (`user.can('templates.view')` for the entry point in
+`home_shell.dart`, `user.can('templates.manage')` for the write controls in
+`template_management_screen.dart`) — grep for `.can(` confirms it. Every other action in this app either
+has no client-side gate at all (the four contact actions render unconditionally; the server's `403`
+is what actually refuses) or is gated by a fact on the record rather than a permission (the Email button
+disappears when `lead.email` is null, not when a permission is absent). **Both of the two real gates
+already had both branches tested** — `templates.view` present/absent for the entry point, and
+`templates.manage` present/absent for the write controls — so there was nothing to close here. If a
+third permission-gated control is added later, the standard this suite already sets is: one test for
+held, one for not held, same as these.
+
+**SEC-PII-04 (phone numbers never rendered).** There is no runtime helper enforcing this — it is
+enforced by the model shape: `Lead.phone` and `Lead.phoneFormatted` exist (the number has to be held to
+be handed to `PhoneDialer`), but grepping `lib/screens/` and `lib/widgets/` for `.phone` finds exactly
+one call site, `deps.dialer.dial(lead.phone)` in `lead_detail_screen.dart` — never a `Text` widget.
+`TemplateRender` goes further and simply **does not model** the preview endpoint's `recipient` field,
+which is the lead's actual address — the field cannot reach a screen because there is nowhere on the
+class to hold it, which is a compile error away from a review comment. No other model in `lib/models/`
+carries a phone number at all (`Call`, `FollowUp`, `OutboundMessage`, `User` — checked directly). The
+existing guard, `expectPhoneNeverRendered` in `lead_contact_actions_test.dart`, walks **every**
+`Text`/`RichText`/`EditableText` actually painted rather than checking specific widgets, and is applied
+to the lead detail screen, the lead list (including the regression case where a missing company/city
+used to fall back to the number), and a queued-send confirmation. Given no other screen holds a phone
+number to leak, this is complete, not merely applied to "the screens it was written for" — there is
+nothing else to apply it to.
+
+### 9.4 The device-dependency boundary (Phase 32/33)
+
+Phase 32 (Android call recording) is blocked on **T-44**: third-party call recording is blocked outright
+on most Android 10+ handsets, and the only way to know what a given OEM/OS combination actually allows
+is a physical-device test. Phase 33 built the offline queue (`Outbox`/`OutboxFlusher`) in anticipation of
+recording uploads, reasoning that FR-REC-02's "durable queue, dedupe, single-flight flush" requirement
+would apply to an upload exactly as it applies to a call outcome — and wired it to call outcomes now,
+because that is the write that exists today.
+
+**Everything up to and including that queue is tested, and tested without a device**, because none of it
+touches a platform channel:
+
+- The queue itself — persistence, ordering, dedupe via `Idempotency-Key`, single-flight (§9.2).
+- The flusher's retry policy — what is retryable, what is permanent, what defers (§9.2).
+- The dial *sequence* short of the actual dial — `CallRepository.start` creates the call record and
+  never queues a dial intent offline (a call that skipped the DNC gate would be worse than a lost one),
+  covered by `call_repository_test.dart`.
+- `PhoneDialer` is faked by `RecordingDialer` in every test — it records that `dial(number)` was called
+  and returns a scripted success/failure, but no test claims to know what happens after that call, because
+  nothing in this suite can observe it.
+
+**What genuinely cannot be tested without a physical device**, and what this phase deliberately did
+**not** fake:
+
+- Whether call recording is possible at all on a given handset (T-44's actual question).
+- The real behaviour of the OS `tel:` intent — whether it actually opens the dialer, backgrounds this
+  app correctly, and returns control the way `PhoneDialer`'s real implementation assumes.
+- Actual audio capture and actual upload — there is no upload code yet (Phase 32 has not built it), so
+  there is nothing to write a fake-device test against; writing one now would be testing a mock of code
+  that does not exist.
+- Anything in the `android/` native project itself (permissions, foreground services, OEM-specific
+  restrictions) — none of that runs under `flutter test`, which never leaves the Dart VM.
+
+The rule this phase applied throughout: if a test would need to assert something about behaviour this
+suite cannot actually observe (a dialer that really opened, a device that really recorded), it does not
+get written with a fake standing in for the unknown answer. The `RecordingDialer` fake is honest about
+this — it only ever asserts *that this app asked the OS to dial*, never what the OS did next.
+
+### 9.5 How these tests actually run today, versus how they should once CI exists
+
+**Today: locally, on demand, by whoever is making the change.** `.github/workflows/ci.yml` exists (T-06)
+but has never executed — there is no git remote yet (confirmed this session) — and even once one exists,
+the workflow as written **does not run the Flutter suite at all**: it is scoped to
+`working-directory: backend` and has no `flutter test` step. So today, "the Flutter suite is green" means
+exactly what this phase's own report means: someone ran `flutter test` (and `flutter analyze`) in
+`mobile/` by hand and read the output, the same way every Flutter test count in this document
+(87 → 119 → 127) was produced. That is a materially weaker guarantee than the backend's — a backend
+regression is *supposed* to be caught by the first CI run once a remote exists; a Flutter regression today
+is caught only if a human remembers to run the suite before shipping.
+
+**What CI should do, once a remote exists** (this is aspirational — nothing below runs today):
+
+1. A second job in `ci.yml` (or a separate workflow), triggered the same way as the backend job, scoped to
+   `working-directory: mobile`.
+2. `flutter pub get`, then `flutter analyze` as a gate — this suite is analyze-clean today
+   (`flutter analyze`: no issues, confirmed this session) and should stay a merge blocker the same way
+   Pint is for the backend (§6).
+3. `flutter test` as a gate, same as the backend's "any test fails" rule.
+4. **No emulator/device runner in this first pass.** All 127 tests today are Unit/Widget tier (§9.1) and
+   run under the standard `flutter test` host binding — no Android emulator, no `integration_test`
+   runner, no self-hosted device farm. Adding one is future work gated on Phase 32 actually producing
+   device-dependent code worth running in CI; standing up emulator infrastructure to run zero
+   device-dependent tests would be effort spent proving nothing.
+5. Coverage reporting, unenforced at first, matching the backend's own stance in §6 — the same argument
+   applies: a coverage floor nobody has signed off on teaches people to disable the check.
+
+This is written as a plan, not a workflow file, because writing the YAML now — before a remote exists to
+run it, and in a project whose own CI has literally never executed once — would be exactly the kind of
+aspirational artifact TESTING.md's own history warns against (see the corrected §3.1 audit and the
+Status line's own history above). When Phase 28/29's web deploy work stands up the remote, this plan is
+what the mobile job should implement.
+
+### 9.6 Relationship to the Web CRM's Dusk/E2E work
+
+`backend/tests/Browser/` already exists (Components, Pages, an `ExampleTest.php`) — Laravel Dusk
+scaffolding for the Web CRM, tracked separately in TODO.md as T-42 (E2E tool choice) and TESTING §8
+("Browser/E2E testing for the Web CRM (Dusk?)"). That work is **explicitly out of scope for this
+phase** — Phase 34 is the Flutter client's tracker entry (NFR-09), not the Web CRM's, and this pass did
+not read, run, or modify anything under `backend/`.
+
+The two suites answer different questions and should stay separate rather than be unified into one
+"E2E" effort:
+
+- **Dusk** drives a real browser against the real Laravel app — its value is proving the Blade
+  shells + jQuery/AJAX actually work end-to-end in a DOM, which nothing in `backend/tests/Feature`
+  can see.
+- **This suite** never touches a browser or a real server — `ScriptedApi` stands in for the backend
+  entirely, so what it proves is the Flutter client's own contract handling: does it decode what the API
+  documents, does it show what the server says, does it fail closed the way ADR-B requires.
+
+Where the two suites *should* eventually agree, and currently can only agree by both citing the same
+source rather than by any shared test: the response envelope shape (`API_DOCUMENTATION` §2, asserted by
+`Feature\Api\ResponseEnvelopeTest` on one side and `core/api/api_envelope_test.dart` on the other), and
+the wording of server-authored refusal messages this app shows verbatim (NFR-05's "Web and Android
+refuse in the same words") — a wording change on the backend that Dusk would not catch (it drives the
+Web CRM's own Blade view, not the API envelope) could still silently break the Flutter widget tests that
+assert on those exact sentences, which is in fact why several of this suite's tests assert on the
+literal server sentence rather than a substring. There is no contract test today that pins the sentence
+itself against both consumers at once; recording that as a known limitation is more honest than
+implying either suite currently guards it.
+
+## 10. Web CRM Browser/E2E Testing (Phase 28, T-42)
+
+Phase 8 and its follow-ups built twelve-plus Blade screens as thin shells over `/api/v1/*`, and every
+one of them was tested at the HTTP-response level - session auth, permission-gated page access, `assertSee`/
+`assertDontSee` on the rendered HTML (`tests/Feature/Web/*`, TESTING §7). What that suite structurally
+cannot see is what those pages are actually *for*: real JavaScript executing in a real DOM, an AJAX
+round trip landing and repainting something, a Bootstrap modal opening and closing, a client-side branch
+that only runs after a fetch this suite never made. That gap is what T-42 asked for and what this phase
+closes with Laravel Dusk, in a new `tests/Browser/` directory that touches nothing under `tests/Feature`.
+
+### 10.1 Does it actually run on this machine
+
+Yes, confirmed with a real command and real output, not assumed — **but `vendor/bin/phpunit -c phpunit.dusk.xml` alone is not sufficient**, and running it without the prerequisite below produces `ERR_CONNECTION_REFUSED` or (worse, if a stale server from an unrelated earlier command is still bound to the port) confusing failures against the wrong environment entirely. This was found the hard way on a later verification pass and is recorded here so it is not rediscovered:
+
+**Prerequisite**: a `php artisan serve` process must already be running, serving the *Dusk* environment specifically — `phpunit.dusk.xml`'s own header comment explains why: the `<env>` entries in that file only cover the PHPUnit process itself, while the browser talks to a completely separate OS process that reads `.env` directly. `php artisan dusk` (the Artisan wrapper) does **not** start that server for you — confirmed by running it directly and getting the same connection-refused failure. The working sequence is:
+
+```bash
+cp .env .env.backup        # save whatever is there
+cp .env.dusk.local .env    # the served app must read the Dusk env, not the real one
+php artisan serve --host=127.0.0.1 --port=8000 &   # leave running in the background
+vendor/bin/phpunit -c phpunit.dusk.xml
+cp .env.backup .env        # restore before doing anything else in this checkout
+```
+
+Also check for a stale `php artisan serve` already squatting on port 8000 from an earlier, unrelated command (`netstat -ano | grep :8000`) before starting a new one — two processes bound to the same port is indistinguishable from the app being broken (garbled selectors, wrong redirects) rather than the actual cause (requests landing on whichever process the OS happened to route them to).
+
+With that prerequisite met:
+
+```
+$ vendor/bin/phpunit -c phpunit.dusk.xml
+PHPUnit 11.5.56 by Sebastian Bergmann and contributors.
+............                                                      12 / 12 (100%)
+Time: 00:52.428, Memory: 52.00 MB
+OK (12 tests, 49 assertions)
+```
+
+Chrome 152.0.7977.76 is installed on this machine (`Google\Chrome\Application\chrome.exe`), and
+`php artisan dusk:install` auto-matched and downloaded ChromeDriver 152.0.7977.82 for it - no manual
+version pinning was needed. Getting there took an actual iteration loop, worth recording because the
+failures were real and not staged: a `meta[name="csrf-token"]` lookup failed because Dusk's plain-CSS
+`attribute()` scopes selectors under `<body>` (the tag lives in `<head>`, so it needed `script()`
+instead); a status-history assertion raced `loadTransitions()` and `loadHistory()`, which fire in
+parallel from the same `.done()` handler rather than in sequence, so waiting on the badge alone did not
+guarantee the history call had landed too; and a permission-gated visibility assertion tripped on the
+DNC screen's own "Removed only" filter option, which legitimately contains the substring "Remove" and
+has nothing to do with the `dnc.remove` permission the test was actually checking - fixed by scoping the
+assertion to `#dnc-rows` rather than the whole page. All three are the ordinary cost of writing
+JavaScript-aware tests against JavaScript that was not written with tests in mind, not evidence against
+the approach.
+
+**What this does NOT yet prove**: that this same run succeeds in CI. There is no git remote yet (§9.5
+records the same caveat for the Flutter side), so `.github/workflows/ci.yml` has never executed once,
+Dusk step or no Dusk step. A CI runner additionally needs a Chrome/ChromeDriver pair actually present
+(GitHub's `ubuntu-latest` image ships one; a self-hosted runner would not without installing it) and a
+`--headless=new` Chrome to run without a display, which `tests/DuskTestCase.php`'s generated
+`driver()` already requests by default. Nothing about the tests themselves is headless-unfriendly - this
+run above **was** headless, on this same Windows machine, with no virtual display server needed - but
+"runs headless locally" and "is wired into a CI job that runs on every push" are different claims, and
+only the first one is true today. Wiring the second is scoped separately (see 10.5).
+
+### 10.2 Why a separate, fourth database
+
+`.env.dusk.local` (gitignored, matched by the existing `.env.*` rule) points Dusk at
+`marketing_crm_dusk` - not `marketing_crm`, not `marketing_crm_test`, and not any of the parallel
+suite's `_test_a`..`_test_d` databases. Two reasons, recorded in the file's own header comment because
+they are easy to reverse by a well-meaning future edit:
+
+1. **Process boundary.** Dusk's browser talks to a real `php artisan serve` process; the PHPUnit
+   process asserting against the database is a *different* process. `RefreshDatabase`'s transaction-
+   per-test trick (what the Feature suite uses) is invisible across that boundary - a transaction the
+   PHPUnit process opens is never visible to queries the served app makes answering the browser's
+   requests. `tests/DuskTestCase.php` uses `Illuminate\Foundation\Testing\DatabaseTruncation` instead,
+   which issues real, committed statements both processes agree on - at the cost of one `migrate:fresh`
+   per run instead of per test.
+2. **Pool isolation.** The `_test_a`..`_test_d` suffixes are Laravel's parallel-testing databases,
+   claimed and released per worker process for the Feature/Unit run (itself running as `root` per T-48).
+   Dusk has its own lifecycle, invoked as its own command - reusing one of those names would either
+   collide with a live parallel worker or silently assume the two suites never run at the same time.
+
+`phpunit.dusk.xml`'s own `<env>` block mirrors `.env.dusk.local`'s database settings rather than
+overriding them, and says why in a comment: the two files are read by two different processes (the
+PHPUnit runner and the served app), and if they ever disagreed on `DB_DATABASE` the assertions in one
+process would be checking data the browser in the other process never touched.
+
+### 10.3 What was covered, and why these five journeys
+
+Not "what was easiest" - what genuinely needs a real DOM and a real AJAX round trip, the same test this
+task was set against:
+
+| Journey | File | Why Dusk, not Feature |
+|---|---|---|
+| Session login → dashboard, incl. the CSRF meta tag | `AuthenticationTest.php` | `Feature\Web\WebCrmTest` already proves the server side (work session, audit row, disabled-account refusal). It cannot prove a real browser's `$.ajaxSetup` actually reads the `<meta name="csrf-token">` tag `layouts/app.blade.php` renders and attaches it to a request - that plumbing only exists once JavaScript runs |
+| Create a lead via `leads/form.blade.php`, confirm it via the list's own AJAX read | `LeadCreationTest.php` | Two separate Blade shells over the same API, written by one page and read back by a completely different one moments later. A Feature test can hit `POST` and `GET /api/v1/leads` directly and prove the API works; it cannot prove the FORM produces that payload or that the LIST's own fetch picks up what a different screen just wrote |
+| Change a lead's status; badge, history and timeline all catch up live | `LeadStatusTransitionTest.php` | `#apply-status`'s success handler fires `loadTransitions()`, `loadHistory()` and `loadTimeline()` - three more AJAX calls, in parallel, against DOM that has to still exist when each response lands. `Feature\Leads\LeadStatusTest` owns the transition rule itself; this owns the orchestration a Feature test cannot execute at all |
+| A destructive action behind a Bootstrap modal (DNC removal) - validation failure then success | `DncRemovalModalTest.php` | The modal's `#confirm-remove` handler hand-maps a 422's `reason` field error onto `.is-invalid`/`.invalid-feedback` on an already-open modal, then closes it and re-fetches the list on success. A Feature test sees the 422 body; it cannot see whether the modal painted it, stayed open, or closed and refreshed correctly afterward |
+| A permission-gated control genuinely absent from the rendered DOM | `PermissionGatedDncControlTest.php` | `dnc/index.blade.php` never puts a "Remove" button in server-rendered markup at all - every row is drawn by the page's own `statusCell()` function, after `GET /api/v1/dnc` resolves, branching on a `canRemove` flag. A Feature test that never executes that script cannot distinguish "the button is genuinely absent" from "the button would appear once an AJAX call this test never made had finished" |
+
+Twelve test methods across these five files plus the infrastructure smoke test (`ExampleTest.php`,
+kept as a fast "is the environment even wired up" check rather than deleted). None of them duplicate
+what `tests/Feature/Web` already owns - the transition matrix, the permission matrix, the duplicate-
+detection rule are all still asserted once, at the API/Feature level, exactly per this document's
+existing convention (§2: "avoid one heavyweight end-to-end test standing in for missing rule tests").
+
+### 10.4 What was NOT attempted, and why
+
+**No journey needed a blocker workaround.** Chrome and a matching ChromeDriver were both available on
+this machine (10.1), so unlike Phase 34's honest "cannot test a physical device" boundary, nothing here
+hit a hardware or environment wall. The scope was narrowed by *value*, not by what would run: dialer/
+auto-dialer screens, campaign builder, reports/Chart.js dashboards and the settings screen were all
+candidates and are all real Blade+AJAX shells, but none of them exercises anything the five journeys
+above do not already exercise structurally (an AJAX round trip, a modal, a client-side permission branch,
+multi-call orchestration after a write). Adding more screens would grow the test count without covering
+a new kind of gap - exactly the "easiest, not most valuable" trap this task named directly.
+
+**Load testing (T-43)** is explicitly a different phase concern (FR-RPT-05, campaign throughput and
+dashboard response targets) and untouched here - Dusk answers "does the browser path work," not "how
+many of them at once." *(Answered separately, same day: see [LOAD_TEST_RESULTS.md](LOAD_TEST_RESULTS.md)
+and TODO.md's T-43 row - a dedicated Artisan-command harness, not Dusk, since this needed queue
+throughput and response-time numbers rather than a browser.)*
+
+### 10.5 Honest state of Phase 28
+
+**Not Done**, and here is exactly what is and is not true:
+
+- ✅ Dusk is installed (`composer.json`), scaffolded (`tests/DuskTestCase.php`), and runs a real,
+  passing 12-test suite against a real Chrome browser on this machine, verified with the command output
+  in §10.1 - not assumed, not simulated.
+  Journeys: session login (incl. the CSRF meta tag), lead creation confirmed via a separate screen's
+  AJAX read, a live multi-call status-transition update, a destructive Bootstrap modal's validation and
+  success paths, and a permission-gated control's genuine absence from a real DOM.
+- ✅ A dedicated `marketing_crm_dusk` database, isolated from both the dev database and every database
+  the parallel Feature/Unit run touches, with the isolation choice documented in the env file itself
+  (§10.2).
+- ❌ **Not wired into CI.** `.github/workflows/ci.yml` has no Dusk (or Chrome/ChromeDriver installation)
+  step, and - as §9.5 records for the Flutter side - there is no git remote yet for any workflow to have
+  run against even once. Adding the step is close to mechanical (GitHub's `ubuntu-latest` runners ship
+  Chrome and a matching driver; the job would need `php artisan serve` started in the background,
+  `marketing_crm_dusk` migrated, and `--headless=new` confirmed, which `DuskTestCase` already requests
+  by default) but it is unverified until a remote exists to prove it, the same standard this document
+  holds every other "aspirational" CI claim to.
+- ✅ **T-43 (load-test targets) is now answered** - a distinct concern from browser E2E tooling, never
+  something Dusk was going to answer. See [LOAD_TEST_RESULTS.md](LOAD_TEST_RESULTS.md) and TODO.md's
+  T-43 row: the <2s dashboard budget holds comfortably, and campaign fan-out meets FR-CAMP-05's literal
+  no-timeout requirement but drains a 50,000-lead audience in roughly 30 minutes (measured and
+  extrapolated, not guessed) on the current `database` queue driver - a real number for T-30's still-open
+  VPS/Redis question, not a resolution of it.
+
+MODULE_STATUS's Phase 28 row is updated to reflect this precisely: browser E2E tooling is chosen, built
+and passing locally, and the load-test question now has a real answer; CI wiring is what keeps the phase
+from Done.

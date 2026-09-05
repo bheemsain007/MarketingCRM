@@ -9,6 +9,7 @@ use App\Models\LeadProduct;
 use App\Models\Opportunity;
 use App\Models\Product;
 use App\Models\Role;
+use App\Models\Sale;
 use App\Models\User;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -290,5 +291,105 @@ class RoleGatedUiTest extends TestCase
             ->assertOk()
             ->assertSee('const canResolve = true;', false)
             ->assertSee('id="backfill"', false);
+    }
+
+    // -----------------------------------------------------------------------
+    // 5. Payment link (payments.manage)
+    // -----------------------------------------------------------------------
+
+    /** A won deal with a sale, created through the real pipeline (Manager holds sales.manage). */
+    private function sale(): Sale
+    {
+        $manager = $this->user(RoleName::Manager);
+        $lead = $this->lead();
+
+        $opportunityId = $this->actingAs($manager, 'sanctum')
+            ->postJson('/api/v1/leads/'.$lead->id.'/opportunities', [
+                'title' => 'Deal',
+                'products' => [['product_id' => Product::factory()->create(['base_price' => 500])->id]],
+            ])->assertCreated()->json('data.id');
+
+        $saleId = $this->actingAs($manager, 'sanctum')
+            ->postJson('/api/v1/opportunities/'.$opportunityId.'/sale')
+            ->assertCreated()->json('data.id');
+
+        return Sale::findOrFail($saleId);
+    }
+
+    #[Test]
+    public function the_can_take_money_flag_is_false_for_a_role_that_may_only_manage_deals(): void
+    {
+        // Manager holds sales.manage but not payments.manage - it may close a
+        // deal and not issue a payment link for it.
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get('/leads/'.$this->lead()->id)
+            ->assertOk()
+            ->assertSee('const canTakeMoney = false;', false);
+
+        $this->actingAs($this->user(RoleName::Accounts))
+            ->get('/leads/'.$this->lead()->id)
+            ->assertOk()
+            ->assertSee('const canTakeMoney = true;', false);
+    }
+
+    #[Test]
+    public function payment_link_is_drawn_inside_the_can_take_money_guard(): void
+    {
+        $html = $this->actingAs($this->user(RoleName::Accounts))
+            ->get('/leads/'.$this->lead()->id)
+            ->assertOk()
+            ->getContent();
+
+        // Record payment and Payment link sit in the same sale panel, drawn
+        // only for someone who may act on money (payments.manage) and only
+        // when there is money to see (canSeeMoney).
+        $guarded = $this->between($html, 'function salePanel(d) {', "\$('#opp-create')");
+
+        $this->assertStringContainsString('canTakeMoney', $guarded);
+        $this->assertStringContainsString('pay-link', $guarded);
+
+        // The click handler it wires up: the endpoint takes no required
+        // fields, so the request body is empty - the amount defaults to the
+        // sale's outstanding balance (BR-PAY-04).
+        $handler = $this->between(
+            $html,
+            "\$('#deal-list').on('click', '.pay-link', function () {",
+            "\$('#deal-list').on('click', '.pay-move', function (e) {",
+        );
+
+        $this->assertStringContainsString(
+            "url: '/api/v1/sales/' + saleId + '/payment-link', method: 'POST'",
+            $handler,
+        );
+    }
+
+    #[Test]
+    public function the_payment_link_result_modal_is_offered_only_to_a_holder_of_payments_manage(): void
+    {
+        $this->actingAs($this->user(RoleName::Accounts))
+            ->get('/leads/'.$this->lead()->id)
+            ->assertOk()
+            ->assertSee('id="payment-link-modal"', false)
+            ->assertSee('id="payment-link-value"', false);
+
+        // Manager holds sales.manage and sees the Deals tab, but not
+        // payments.manage - the result surface for an action it cannot take
+        // must not ship to it either.
+        $this->actingAs($this->user(RoleName::Manager))
+            ->get('/leads/'.$this->lead()->id)
+            ->assertOk()
+            ->assertDontSee('id="payment-link-modal"', false);
+    }
+
+    #[Test]
+    public function generating_a_payment_link_really_does_need_payments_manage(): void
+    {
+        $sale = $this->sale();
+
+        // The contract the button was hidden for: sales.manage alone can only
+        // 403 against the endpoint this control calls.
+        $this->actingAs($this->user(RoleName::Manager), 'sanctum')
+            ->postJson('/api/v1/sales/'.$sale->id.'/payment-link')
+            ->assertForbidden();
     }
 }

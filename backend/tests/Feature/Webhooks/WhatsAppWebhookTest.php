@@ -2,10 +2,16 @@
 
 namespace Tests\Feature\Webhooks;
 
+use App\Enums\Channel;
+use App\Enums\InterestSignalType;
+use App\Enums\RoleName;
 use App\Models\DncEntry;
+use App\Models\InterestSignal;
 use App\Models\Lead;
 use App\Models\Message;
 use App\Models\ProviderWebhookLog;
+use App\Models\Role;
+use App\Models\User;
 use App\Services\Settings\SettingsService;
 use Database\Seeders\RolePermissionSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -408,38 +414,200 @@ class WhatsAppWebhookTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
-    // Inbound replies are NOT implemented (FR-WA-01 gap)
+    // Inbound replies (FR-WA-01)
     // -----------------------------------------------------------------------
 
-    #[Test]
-    public function an_inbound_reply_is_recorded_as_unimplemented_and_nothing_is_stored_against_the_lead(): void
+    /** One `messages` entry wrapped in Meta's entry/changes/value nesting. */
+    private function inboundPayload(array $inbound): array
     {
-        $this->configureWhatsApp();
-        $lead = Lead::factory()->create();
-
-        $this->deliver([
+        return [
             'object' => 'whatsapp_business_account',
             'entry' => [[
                 'id' => 'WABA-1',
                 'changes' => [[
                     'field' => 'messages',
-                    'value' => [
-                        'messages' => [[
-                            'id' => 'wamid.inbound-1',
-                            'from' => '919876543210',
-                            'type' => 'text',
-                            'text' => ['body' => 'Yes please'],
-                        ]],
-                    ],
+                    'value' => ['messages' => [$inbound]],
                 ]],
             ]],
-        ])->assertOk();
+        ];
+    }
 
-        // Logged so the delivery is replayable the day conversations are built,
-        // but no Message row is created - storing conversations is unbuilt work,
-        // not something to improvise inside a webhook.
+    #[Test]
+    public function an_inbound_reply_is_stored_against_the_lead_and_appears_in_its_message_history(): void
+    {
+        $this->configureWhatsApp();
+        $this->actingAsRole();
+        $lead = Lead::factory()->create(['phone_e164' => '+919876543210']);
+
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-1',
+            'from' => '919876543210',
+            'type' => 'text',
+            'timestamp' => (string) Carbon::parse('2026-08-10 10:45:00', 'Asia/Kolkata')->timestamp,
+            'text' => ['body' => 'Yes, please send the brochure.'],
+        ]))->assertOk();
+
+        $message = Message::where('lead_id', $lead->id)->firstOrFail();
+        $this->assertSame('whatsapp', $message->channel->value);
+        $this->assertSame('inbound', $message->direction);
+        $this->assertSame('wamid.inbound-1', $message->provider_message_id);
+        $this->assertSame('Yes, please send the brochure.', $message->body);
+        // The moment Meta says the LEAD sent it, not the moment the webhook ran -
+        // WhatsAppDriver's window check reads this column.
+        $this->assertTrue(Carbon::parse('2026-08-10 10:45:00', 'Asia/Kolkata')->equalTo($message->sent_at));
+
         $log = ProviderWebhookLog::where('event_type', 'inbound')->firstOrFail();
-        $this->assertSame('Inbound replies are not implemented (FR-WA-01).', $log->processing_error);
+        $this->assertNull($log->processing_error);
+
+        // The exact screen this exists for: the lead's Messages tab.
+        $this->getJson("/api/v1/leads/{$lead->id}/messages")
+            ->assertOk()
+            ->assertJsonPath('data.items.0.direction', 'inbound')
+            ->assertJsonPath('data.items.0.body', 'Yes, please send the brochure.');
+    }
+
+    #[Test]
+    public function an_inbound_reply_is_scored_as_interest_through_the_shared_engine(): void
+    {
+        // BR-INT-01: every channel routes interest through one engine. FR-WA-01
+        // wiring this up means the InboundReply signal that already existed
+        // (BR-SCORE-01: +15) finally fires for a real WhatsApp reply.
+        $this->configureWhatsApp();
+        $lead = Lead::factory()->create(['phone_e164' => '+919876543210']);
+
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-2',
+            'from' => '919876543210',
+            'type' => 'text',
+            'text' => ['body' => 'Sounds good, go ahead.'],
+        ]))->assertOk();
+
+        $message = Message::where('lead_id', $lead->id)->firstOrFail();
+
+        $this->assertDatabaseHas('interest_signals', [
+            'lead_id' => $lead->id,
+            'type' => InterestSignalType::InboundReply->value,
+            'channel' => Channel::WhatsApp->value,
+            'evidence_type' => Message::class,
+            'evidence_id' => $message->id,
+        ]);
+        $this->assertGreaterThan(0, $lead->fresh()->score);
+    }
+
+    #[Test]
+    public function a_non_text_inbound_message_still_becomes_a_readable_row(): void
+    {
+        // A customer who sends a photo must not look like they never replied -
+        // the media itself is not fetched, but the row exists.
+        $this->configureWhatsApp();
+        $lead = Lead::factory()->create(['phone_e164' => '+919876543210']);
+
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-3',
+            'from' => '919876543210',
+            'type' => 'image',
+            'image' => ['id' => 'media-1'],
+        ]))->assertOk();
+
+        $message = Message::where('lead_id', $lead->id)->firstOrFail();
+        $this->assertSame('[image message]', $message->body);
+    }
+
+    #[Test]
+    public function a_reply_from_an_unrecognised_number_is_acknowledged_and_stores_nothing(): void
+    {
+        $this->configureWhatsApp();
+
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-4',
+            'from' => '919999999999',
+            'type' => 'text',
+            'text' => ['body' => 'Hello?'],
+        ]))->assertOk();
+
+        $log = ProviderWebhookLog::where('event_type', 'inbound')->firstOrFail();
+        $this->assertSame('No matching lead.', $log->processing_error);
+        $this->assertSame(0, Message::count());
+    }
+
+    #[Test]
+    public function a_redelivered_inbound_reply_does_not_file_or_score_twice(): void
+    {
+        $this->configureWhatsApp();
+        $lead = Lead::factory()->create(['phone_e164' => '+919876543210']);
+        $payload = $this->inboundPayload([
+            'id' => 'wamid.inbound-5',
+            'from' => '919876543210',
+            'type' => 'text',
+            'text' => ['body' => 'Repeat me not.'],
+        ]);
+
+        $this->deliver($payload)->assertOk();
+        $this->deliver($payload)->assertOk();
+
+        $this->assertSame(1, Message::where('lead_id', $lead->id)->count());
+        $this->assertSame(
+            1,
+            InterestSignal::where('lead_id', $lead->id)
+                ->where('type', InterestSignalType::InboundReply->value)
+                ->count(),
+        );
+    }
+
+    #[Test]
+    public function an_inbound_stop_keyword_is_left_to_the_separate_opt_out_path(): void
+    {
+        // The DNC STOP-keyword path is /webhooks/inbound (WebhookController),
+        // matched on the first word - not duplicated here. This endpoint must
+        // not file a STOP as a conversation message or score it as +15
+        // interest, and must not suppress the lead itself (ADR-E).
+        $this->configureWhatsApp();
+        $lead = Lead::factory()->create(['phone_e164' => '+919876543210']);
+
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-stop',
+            'from' => '919876543210',
+            'type' => 'text',
+            'text' => ['body' => 'STOP'],
+        ]))->assertOk();
+
         $this->assertSame(0, Message::where('lead_id', $lead->id)->count());
+        $this->assertSame(0, DncEntry::where('lead_id', $lead->id)->count());
+
+        $log = ProviderWebhookLog::where('event_type', 'inbound')->firstOrFail();
+        $this->assertStringContainsString('/webhooks/inbound', (string) $log->processing_error);
+
+        // A STOP buried mid-sentence is not a command, exactly as the shared
+        // keyword matcher defines it - so this one still gets filed normally.
+        $this->deliver($this->inboundPayload([
+            'id' => 'wamid.inbound-not-stop',
+            'from' => '919876543210',
+            'type' => 'text',
+            'text' => ['body' => "please don't stop the offers"],
+        ]))->assertOk();
+
+        $this->assertSame(1, Message::where('lead_id', $lead->id)->count());
+    }
+
+    #[Test]
+    public function a_malformed_inbound_message_cannot_crash_the_endpoint(): void
+    {
+        $this->configureWhatsApp();
+
+        foreach ([
+            ['entry' => [['changes' => [['field' => 'messages', 'value' => ['messages' => 'not-an-array']]]]]],
+            ['entry' => [['changes' => [['field' => 'messages', 'value' => ['messages' => [['id' => ['nested']]]]]]]]],
+            ['entry' => [['changes' => [['field' => 'messages', 'value' => ['messages' => [['id' => 'w1', 'from' => ['nested']]]]]]]]],
+            ['entry' => [['changes' => [['field' => 'messages', 'value' => ['messages' => [['id' => 'w1', 'from' => '919876543210', 'text' => 'not-an-array']]]]]]]],
+        ] as $payload) {
+            $this->deliver($payload)->assertOk();
+        }
+    }
+
+    private function actingAsRole(): void
+    {
+        $user = User::factory()->create();
+        $user->roles()->attach(Role::where('name', RoleName::Admin->value)->first());
+        $this->actingAs($user->fresh(), 'sanctum');
     }
 }

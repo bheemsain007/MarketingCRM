@@ -3,13 +3,20 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\Channel;
+use App\Enums\InterestSignalType;
 use App\Http\Controllers\Controller;
+use App\Models\Lead;
+use App\Models\Message;
 use App\Models\ProviderWebhookLog;
+use App\Services\Interest\InterestEngine;
 use App\Services\Messaging\DeliveryStatusService;
 use App\Services\Settings\SettingsService;
+use App\Support\OptOutKeyword;
+use App\Support\PhoneNumber;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Carbon;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 
 /**
@@ -32,9 +39,16 @@ use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
  * each status to `DeliveryStatusService` (the one place that decides what a
  * provider's word means to a message), and acknowledges.
  *
- * Scope is status receipts only. Inbound message bodies are recorded and NOT
- * acted on - storing conversations is unbuilt work, not something to improvise
- * inside a webhook (see the FR-WA-01 gap list).
+ * Status receipts AND genuine inbound replies both arrive here - Meta has no
+ * other way to tell us either one happened. A reply becomes a `Message` row
+ * (direction=inbound) against the lead, the same table and shape the outbound
+ * side already writes, and an `InboundReply` interest signal (FR-WA-01,
+ * BR-SCORE-01) through the one engine every channel routes interest through
+ * (BR-INT-01) - this controller does not decide what a reply is worth, only that
+ * one happened. A STOP-keyword reply is left alone here: that suppression is
+ * `WebhookController::inbound()`'s job alone (ADR-E), and inbound receipt itself
+ * is never DNC-gated - suppression blocks US contacting the LEAD, not the other
+ * way round.
  */
 class WhatsAppWebhookController extends Controller
 {
@@ -80,7 +94,7 @@ class WhatsAppWebhookController extends Controller
      * unique index whatever envelope it arrives in, while the three statuses of
      * one message - sent, delivered, read - stay distinct events.
      */
-    public function receive(Request $request, DeliveryStatusService $statuses): Response
+    public function receive(Request $request, DeliveryStatusService $statuses, InterestEngine $interest): Response
     {
         // Verified BEFORE anything is parsed as business data (SEC-WH-01).
         if (! $this->signatureIsValid($request)) {
@@ -101,7 +115,7 @@ class WhatsAppWebhookController extends Controller
             $this->ingestStatus($request, $event, $statuses);
         }
 
-        $this->recordInboundMessages($request);
+        $this->recordInboundMessages($request, $interest);
 
         // ACK means received, not processed (API_DOCUMENTATION §10). Meta
         // retries anything that is not a 200 for hours, and a retry storm over a
@@ -245,18 +259,16 @@ class WhatsAppWebhookController extends Controller
     }
 
     /**
-     * Inbound replies are OUT OF SCOPE, and are logged as unhandled rather than
-     * dropped (FR-WA-01 gap, SEC-WH-04).
+     * Genuine inbound replies become a conversation, not just a log row
+     * (FR-WA-01, SEC-WH-04).
      *
-     * The row exists so "the customer says they replied" is answerable and so the
-     * delivery is replayable the day conversations are actually built - the whole
-     * reason payloads are stored before processing. Nothing is written against
-     * the lead and no opt-out is honoured here: the STOP path is
-     * `/webhooks/inbound`, and quietly growing a second one inside a delivery
-     * webhook is how a channel ends up with two suppression implementations
-     * (ADR-E).
+     * The log row is written FIRST, exactly as `ingestStatus()` does, so a
+     * redelivery is absorbed by its unique index before any further processing
+     * runs - a reply can arrive again and must not file twice or score twice.
+     * What happens after that is `processInboundMessage()`'s decision; this
+     * loop only walks the payload and keeps the replay guard intact.
      */
-    private function recordInboundMessages(Request $request): void
+    private function recordInboundMessages(Request $request, InterestEngine $interest): void
     {
         foreach ($this->messageValues($request) as $value) {
             foreach ((array) ($value['messages'] ?? []) as $inbound) {
@@ -265,21 +277,132 @@ class WhatsAppWebhookController extends Controller
                 }
 
                 try {
-                    ProviderWebhookLog::create([
+                    $log = ProviderWebhookLog::create([
                         'provider' => 'whatsapp',
                         'event_type' => 'inbound',
                         'provider_event_id' => mb_substr('inbound:'.$inbound['id'], 0, 190),
                         'payload' => $inbound,
                         'headers' => ['user-agent' => $request->userAgent()],
                         'signature_valid' => true,
-                        'processed_at' => now(),
-                        'processing_error' => 'Inbound replies are not implemented (FR-WA-01).',
                     ]);
                 } catch (UniqueConstraintViolationException) {
                     // Already seen (SEC-WH-03).
+                    continue;
                 }
+
+                $log->update([
+                    'processed_at' => now(),
+                    'processing_error' => $this->processInboundMessage($inbound, $interest),
+                ]);
             }
         }
+    }
+
+    /**
+     * Everything a genuine inbound reply needs, short of the STOP path.
+     *
+     * A reply with no matching lead is acknowledged, not errored - same
+     * reasoning as an unmatched status receipt: it is usually another
+     * environment sharing the WhatsApp number, and there is no lead to act on
+     * either way (SEC-WH-*). Deliberately no DNC check here at all: suppression
+     * blocks US contacting the LEAD (BR-DNC-01) and has no meaning applied to
+     * the lead contacting us.
+     *
+     * A STOP-keyword reply is intentionally left to `WebhookController::inbound()`
+     * (ADR-E) - filing it as a normal message here too would additionally score
+     * it as +15 interest (BR-SCORE-01) on the way past, which an opt-out plainly
+     * is not.
+     *
+     * @param  array<string, mixed>  $inbound
+     * @return string|null the `processing_error` to record; null means a
+     *                      Message row and interest signal were created
+     */
+    private function processInboundMessage(array $inbound, InterestEngine $interest): ?string
+    {
+        $from = is_scalar($inbound['from'] ?? null)
+            ? PhoneNumber::normalise((string) $inbound['from'])
+            : null;
+
+        if ($from === null) {
+            return 'No usable sender number.';
+        }
+
+        $lead = Lead::where('phone_e164', $from)->first();
+
+        if ($lead === null) {
+            return 'No matching lead.';
+        }
+
+        $text = $this->inboundText($inbound);
+
+        if (OptOutKeyword::matches($text)) {
+            return 'Opt-out keyword; suppression is handled by the /webhooks/inbound STOP path, not here.';
+        }
+
+        $message = Message::create([
+            'tenant_id' => config('crm.default_tenant_id'),
+            'lead_id' => $lead->id,
+            'channel' => Channel::WhatsApp->value,
+            'direction' => 'inbound',
+            // Same provider label an outbound send on this channel would
+            // record, so "who is this conversation with" reads consistently
+            // for either direction.
+            'provider' => (string) ($this->settings->get('providers.whatsapp.driver') ?: 'whatsapp_cloud'),
+            'provider_message_id' => (string) $inbound['id'],
+            'recipient' => $lead->phone_e164,
+            'body' => $text,
+            // Not one of the outbound lifecycle states (queued/sent/.../failed) -
+            // an inbound row never moves through that progression, and reusing
+            // one of those words would let it get swept into an outbound-only
+            // count (e.g. the campaign frequency cap) by accident.
+            'status' => 'received',
+            // The moment the LEAD sent it, not the moment we recorded it -
+            // WhatsAppDriver's 24-hour window check reads exactly this column
+            // to decide whether a later send may go as free text (FR-WA-01).
+            'sent_at' => $this->inboundTimestamp($inbound),
+        ]);
+
+        $interest->record($lead, InterestSignalType::InboundReply, null, [
+            'channel' => Channel::WhatsApp,
+            'evidence' => $message,
+            'excerpt' => mb_substr($text, 0, 255),
+        ]);
+
+        return null;
+    }
+
+    /**
+     * The reply text, or a placeholder for a type this webhook does not
+     * transcribe (image, audio, location, ...). Media content itself is not
+     * fetched or stored - the raw payload is already preserved on the log row
+     * for whoever needs it - but the row still has to exist and be readable, or
+     * a customer who sent a photo would look like they never replied at all.
+     *
+     * @param  array<string, mixed>  $inbound
+     */
+    private function inboundText(array $inbound): string
+    {
+        if (is_array($inbound['text'] ?? null) && is_scalar($inbound['text']['body'] ?? null)) {
+            return (string) $inbound['text']['body'];
+        }
+
+        $type = is_scalar($inbound['type'] ?? null) ? (string) $inbound['type'] : 'unknown';
+
+        return sprintf('[%s message]', $type);
+    }
+
+    /**
+     * Meta reports `timestamp` as Unix seconds; a payload that omits or
+     * mangles it still has to produce a row, so this falls back to now rather
+     * than rejecting the message over a cosmetic field.
+     *
+     * @param  array<string, mixed>  $inbound
+     */
+    private function inboundTimestamp(array $inbound): Carbon
+    {
+        $timestamp = $inbound['timestamp'] ?? null;
+
+        return is_numeric($timestamp) ? Carbon::createFromTimestamp((int) $timestamp) : now();
     }
 
     /**

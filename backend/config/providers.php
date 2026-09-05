@@ -50,6 +50,12 @@ return [
         'token' => env('WHATSAPP_API_KEY'),
         'webhook_verify_token' => env('WHATSAPP_WEBHOOK_VERIFY_TOKEN'),
         'app_secret' => env('WHATSAPP_APP_SECRET'),
+        // The `language.code` a Cloud API template send must carry (e.g.
+        // "en_US"). Meta approves a template in a specific language and
+        // silently rejects a mismatched code, so this is not guessed at - a
+        // send outside the 24-hour window refuses cleanly while it is unset
+        // (FR-WA-01).
+        'template_language' => env('WHATSAPP_TEMPLATE_LANGUAGE'),
     ],
 
     // Phase 12 - Facebook / Instagram lead capture

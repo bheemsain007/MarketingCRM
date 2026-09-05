@@ -700,6 +700,38 @@
         </div>
     </div>
 @endpermission
+
+@permission('payments.manage')
+    {{--
+        The result of POST /sales/{sale}/payment-link (FR-PAY-02, T-59). The
+        link is the whole payload - there is nothing to submit here, only
+        something to copy or open, so this is a result surface, not a form.
+    --}}
+    <div class="modal fade" id="payment-link-modal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2 class="modal-title h6">Payment link</h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-2">
+                        Send this to the customer. It stays Pending until the gateway confirms payment —
+                        issuing it does not collect anything by itself.
+                    </p>
+                    <div class="input-group input-group-sm">
+                        <input type="text" id="payment-link-value" class="form-control" readonly>
+                        <button type="button" class="btn btn-outline-secondary" id="payment-link-copy">Copy</button>
+                        <a href="#" id="payment-link-open" target="_blank" rel="noopener" class="btn btn-outline-primary">Open</a>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+@endpermission
 @endsection
 
 @push('scripts')
@@ -1259,6 +1291,29 @@ $(function () {
     });
 
     // ----------------------------------------------------------------- deals
+    // Guarded like the other modals: absent for anyone without payments.manage,
+    // so there is nothing here for `.pay-link` (also gated by canTakeMoney) to
+    // fail to find.
+    let paymentLinkModal = null;
+    if (document.getElementById('payment-link-modal')) {
+        paymentLinkModal = new bootstrap.Modal(document.getElementById('payment-link-modal'));
+
+        $('#payment-link-copy').on('click', function () {
+            const field = document.getElementById('payment-link-value');
+            field.focus();
+            field.select();
+            field.setSelectionRange(0, 99999);
+
+            try {
+                document.execCommand('copy');
+                CRM.alert('Link copied.', 'success');
+            } catch (e) {
+                // Clipboard permissions vary by browser; the field is still
+                // selected, so a manual Ctrl+C works either way.
+            }
+        });
+    }
+
     function loadDeals() {
         if (!$('#deal-list').length) return;
 
@@ -1356,6 +1411,10 @@ $(function () {
             + '<div data-payments></div>'
             + (canTakeMoney
                 ? '<button class="btn btn-sm btn-outline-primary mt-2 pay-add" data-sale="' + d.sale.id + '">Record payment</button>'
+                  /* FR-PAY-02, T-59: a gateway-hosted link for the outstanding
+                     balance, so a customer can pay without cash changing hands
+                     over the phone. */
+                  + ' <button class="btn btn-sm btn-outline-secondary mt-2 pay-link" data-sale="' + d.sale.id + '">Payment link</button>'
                 : '')
             + '</div>';
     }
@@ -1510,6 +1569,32 @@ $(function () {
                 CRM.alert(r.message || 'Payment recorded.', 'success');
                 loadDeals();
 
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
+    });
+
+    // ---- Payment link (FR-PAY-02, T-59) ----------------------------------
+    $('#deal-list').on('click', '.pay-link', function () {
+        const saleId = $(this).data('sale');
+
+        // Every field the endpoint takes is optional - amount defaults to the
+        // sale's outstanding balance (BR-PAY-04) - so there is nothing to fill
+        // in, only something to confirm before asking a customer for money.
+        // Unlike the prompt()-based controls above, this is the whole flow.
+        if (!window.confirm('Generate a payment link for the outstanding balance on this sale?')) return;
+
+        $.ajax({ url: '/api/v1/sales/' + saleId + '/payment-link', method: 'POST' })
+            .done(function (response) {
+                const link = response.data;
+
+                $('#payment-link-value').val(link.url);
+                $('#payment-link-open').attr('href', link.url);
+                paymentLinkModal.show();
+
+                // The link's payment sits Pending against the sale until the
+                // gateway callback says otherwise - reflected here, not
+                // collected: issuing a link is not a receipt (BR-PAY-04).
+                loadPayments($('div[data-sale="' + saleId + '"]'));
             })
             .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); });
     });

@@ -206,4 +206,10 @@ Route::middleware('auth')->group(function () {
     // vocabulary is configuration.
     Route::get('/tags', [PageController::class, 'tags'])
         ->middleware('permission:settings.manage')->name('web.tags');
+
+    // The interested/hot/warm/product-wise views (Phase 20's GET
+    // /interested-leads had no screen). Gated the same as the leads list -
+    // this is a filtered view of leads, not a distinct capability.
+    Route::get('/leads-interested', [PageController::class, 'interestedLeads'])
+        ->middleware('permission:leads.view')->name('web.leads.interested');
 });

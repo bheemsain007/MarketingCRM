@@ -63,6 +63,12 @@
     </a>
     @endpermission
 
+    @permission('leads.view')
+    <a href="{{ route('web.leads.interested') }}" class="{{ request()->routeIs('web.leads.interested') ? 'active' : '' }}">
+        <i class="bi bi-fire me-2"></i>Interested Leads
+    </a>
+    @endpermission
+
     @permission('leads.assign')
     <a href="{{ route('web.assignments') }}" class="{{ request()->routeIs('web.assignments') ? 'active' : '' }}">
         <i class="bi bi-person-check me-2"></i>Assignments

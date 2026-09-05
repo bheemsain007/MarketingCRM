@@ -164,6 +164,21 @@ void main() {
 
       await harness.dispose();
     });
+
+    test('a malformed 200 (no data) also fails closed', () async {
+      // Distinct code path from offline/5xx: no exception is thrown at all —
+      // `envelope.dataMap` is simply null — so this proves the repository's own
+      // `if (data == null)` branch refuses rather than crashing or defaulting
+      // to callable.
+      final harness = Harness();
+      harness.api.reply('GET', '/leads/42/callability', data: null);
+
+      final result = await harness.dependencies.leadRepository.callability(42);
+
+      expect(result.callable, isFalse);
+
+      await harness.dispose();
+    });
   });
 
   group('LeadRepository.calls', () {

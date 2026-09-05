@@ -101,14 +101,7 @@ class OutboundMessageService
         $subject = $content['subject'] ?? $template?->subject;
         $body = $content['body'] ?? $template?->body;
 
-        $variables = [
-            'lead_name' => $lead->name,
-            'lead_company' => $lead->company,
-            'lead_city' => $lead->city,
-            'organisation' => config('app.name'),
-        ];
-
-        foreach ($variables as $key => $value) {
+        foreach ($this->templateVariables($lead) as $key => $value) {
             $token = '{{ '.$key.' }}';
             $loose = '{{'.$key.'}}';
 
@@ -117,6 +110,29 @@ class OutboundMessageService
         }
 
         return ['subject' => $subject, 'body' => $body];
+    }
+
+    /**
+     * The values a template's `{{ token }}` placeholders resolve to (FR-COMM-02).
+     *
+     * Exposed separately from `render()` so `WhatsAppDriver` can reuse exactly
+     * these values as ordered wire parameters for a provider template send
+     * (FR-WA-01) - the values are the same, only what happens to them differs:
+     * `render()` substitutes them into free text, the WhatsApp template payload
+     * places them positionally in `components[].parameters`. One source of truth
+     * for what a placeholder name resolves to, rather than a second lookup here
+     * that can drift from the preview/send renderer.
+     *
+     * @return array<string, string>
+     */
+    public function templateVariables(Lead $lead): array
+    {
+        return [
+            'lead_name' => (string) $lead->name,
+            'lead_company' => (string) $lead->company,
+            'lead_city' => (string) $lead->city,
+            'organisation' => (string) config('app.name'),
+        ];
     }
 
     /** The address this channel would actually use. */

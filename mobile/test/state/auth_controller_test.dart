@@ -63,6 +63,23 @@ void main() {
 
       await harness.dispose();
     });
+
+    test('a malformed /auth/me response (200, no data) is a failure to confirm, not a crash',
+        () async {
+      // A response this app cannot read is not evidence the token is bad — it
+      // falls into the same "shown error, token kept" bucket as offline, via
+      // the generic ApiException branch rather than UnauthenticatedException.
+      final harness = Harness(token: '1|stored');
+      harness.api.reply('GET', '/auth/me', data: null);
+
+      await harness.dependencies.auth.restore();
+
+      expect(harness.dependencies.auth.status.name, 'signedOut');
+      expect(harness.dependencies.auth.errorMessage, isNotNull);
+      expect(await harness.tokenStore.read(), '1|stored');
+
+      await harness.dispose();
+    });
   });
 
   group('AuthController.signIn', () {
@@ -169,6 +186,50 @@ void main() {
       await harness.dependencies.auth.signIn(email: 'priya@example.com', password: 'secret');
 
       expect(harness.dependencies.auth.errorMessage, contains('Too many attempts'));
+
+      await harness.dispose();
+    });
+
+    test('a 200 with no token is a malformed response, not a silent sign-in', () async {
+      // `AuthRepository.login` throws `MalformedResponseException` itself here
+      // — the server said success but sent nothing to authenticate future
+      // requests with. Nothing must be stored.
+      final harness = Harness();
+      harness.api.reply('POST', '/auth/login',
+          message: 'Signed in successfully.', data: <String, dynamic>{'user': userJson()});
+
+      final ok = await harness.dependencies.auth.signIn(
+        email: 'priya@example.com',
+        password: 'secret',
+      );
+
+      // Not a 401, so the global `onUnauthenticated` hook never fires and
+      // `status` is untouched by this failure — same as the 422 and 429 cases
+      // above. `ok` and the surfaced message are what a malformed 200 changes.
+      expect(ok, isFalse);
+      expect(harness.dependencies.auth.isSignedIn, isFalse);
+      expect(harness.dependencies.auth.errorMessage, contains('no token'));
+      expect(await harness.tokenStore.read(), isNull);
+
+      await harness.dispose();
+    });
+
+    test('a 200 with no user is a malformed response, not a silent sign-in', () async {
+      final harness = Harness();
+      harness.api.reply('POST', '/auth/login',
+          message: 'Signed in successfully.', data: <String, dynamic>{'token': '1|abc'});
+
+      final ok = await harness.dependencies.auth.signIn(
+        email: 'priya@example.com',
+        password: 'secret',
+      );
+
+      expect(ok, isFalse);
+      expect(harness.dependencies.auth.isSignedIn, isFalse);
+      expect(harness.dependencies.auth.errorMessage, contains('no user'));
+      // The user check runs before the token is persisted, so this failure
+      // leaves no token behind either — nothing is half signed-in.
+      expect(await harness.tokenStore.read(), isNull);
 
       await harness.dispose();
     });

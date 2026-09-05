@@ -139,6 +139,10 @@ class SettingsRegistry
                 'Verifies the X-Hub-Signature-256 on Cloud API delivery and read receipts. Until it is set, '
                 .'/api/v1/webhooks/whatsapp refuses everything - it can mark messages read and fail them, so an '
                 .'unsigned one is worse than none. A BSP that cannot sign this way uses /webhooks/delivery instead.'),
+            self::credential('providers.whatsapp.template_language', 'whatsapp', 'Template language code (WHATSAPP_TEMPLATE_LANGUAGE)', 'string',
+                'e.g. "en_US". A send outside the 24-hour customer-service window must go as a provider template '
+                .'(FR-WA-01), and Meta approves a template in one specific language - until this is set, that kind '
+                .'of send refuses cleanly rather than guessing a language code Meta will reject.'),
 
             // Phase 12
             self::credential('providers.meta.app_id', 'meta', 'Meta app ID', 'string'),

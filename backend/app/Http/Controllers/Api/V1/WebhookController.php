@@ -15,6 +15,7 @@ use App\Services\Messaging\DeliveryStatusService;
 use App\Services\Payments\PaymentGatewayManager;
 use App\Services\Payments\PaymentLinkService;
 use App\Services\Settings\SettingsService;
+use App\Support\OptOutKeyword;
 use App\Support\PhoneNumber;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
@@ -36,13 +37,6 @@ use Illuminate\Support\Facades\Response;
  */
 class WebhookController extends Controller
 {
-    /**
-     * Standard SMS opt-out keywords (TCPA/CTIA convention). Kept deliberately
-     * small and explicit: every entry here silently stops contact, so the list
-     * is the set of words that unambiguously mean "stop", not a fuzzy guess.
-     */
-    private const OPT_OUT_KEYWORDS = ['STOP', 'UNSUBSCRIBE', 'CANCEL', 'QUIT', 'END', 'OPTOUT', 'OPT-OUT'];
-
     public function __construct(
         private readonly SettingsService $settings,
         private readonly DncService $dnc,
@@ -241,7 +235,7 @@ class WebhookController extends Controller
         $from = PhoneNumber::normalise((string) ($request->input('from') ?? $request->input('phone') ?? ''));
         $text = (string) ($request->input('text') ?? $request->input('body') ?? '');
 
-        if ($channel === null || $from === null || ! $this->isOptOutKeyword($text)) {
+        if ($channel === null || $from === null || ! OptOutKeyword::matches($text)) {
             // A normal inbound reply that is not an opt-out is acknowledged and
             // dropped - this endpoint exists to catch STOP, not to store chat.
             $log->update(['processed_at' => now(), 'processing_error' => 'No opt-out keyword.']);
@@ -567,27 +561,6 @@ class WebhookController extends Controller
         return in_array($channel, [Channel::Sms, Channel::WhatsApp, Channel::Rcs], true)
             ? $channel
             : null;
-    }
-
-    /**
-     * Whether an inbound reply is an opt-out.
-     *
-     * Matched on the FIRST word, case-insensitively: "STOP" and "STOP please"
-     * opt out, but "please don't stop" does not - a keyword buried mid-sentence
-     * is not a command, and treating it as one would suppress a real customer
-     * who mentioned the word in passing.
-     */
-    private function isOptOutKeyword(string $text): bool
-    {
-        $normalised = mb_strtoupper(trim($text));
-
-        if ($normalised === '') {
-            return false;
-        }
-
-        $firstWord = preg_split('/\s+/', $normalised)[0] ?? '';
-
-        return in_array($firstWord, self::OPT_OUT_KEYWORDS, true);
     }
 
     /**

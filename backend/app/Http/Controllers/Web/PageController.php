@@ -432,4 +432,20 @@ class PageController extends Controller
     {
         return view('tags.index');
     }
+
+    /**
+     * The interested/hot/warm/product-wise views (Phase 20, Phase 8's one
+     * remaining gap).
+     *
+     * GET /interested-leads has existed since Phase 20 with no screen -
+     * temperature and product are passed in so the filters cannot offer a
+     * value the API would reject.
+     */
+    public function interestedLeads(): View
+    {
+        return view('leads.interested', [
+            'temperatures' => LeadTemperature::cases(),
+            'products' => Product::query()->where('is_active', true)->orderBy('name')->get(),
+        ]);
+    }
 }

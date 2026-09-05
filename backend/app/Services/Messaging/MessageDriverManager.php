@@ -28,7 +28,13 @@ use App\Services\Settings\SettingsService;
  */
 class MessageDriverManager
 {
-    public function __construct(private readonly SettingsService $settings) {}
+    public function __construct(
+        private readonly SettingsService $settings,
+        // WhatsAppDriver needs the send path's own variable resolver to build a
+        // provider template's `components[].parameters` from the same values
+        // `render()` substitutes into free text (FR-WA-01) - not a second copy.
+        private readonly OutboundMessageService $outbound,
+    ) {}
 
     public function for(Channel $channel): MessageDriver
     {
@@ -50,7 +56,7 @@ class MessageDriverManager
         return match ($channel) {
             Channel::Email => new MailercloudDriver($this->settings),
             Channel::Sms => new BhashSmsDriver($this->settings),
-            Channel::WhatsApp => new WhatsAppDriver($this->settings),
+            Channel::WhatsApp => new WhatsAppDriver($this->settings, $this->outbound),
             Channel::Rcs => new RcsDriver($this->settings),
             Channel::Voice => new VoiceDriver($this->settings),
 
