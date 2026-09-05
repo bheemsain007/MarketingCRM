@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../../repositories/attendance_repository.dart';
 import '../../repositories/auth_repository.dart';
 import '../../repositories/call_repository.dart';
 import '../../repositories/follow_up_repository.dart';
@@ -38,6 +39,7 @@ class AppDependencies {
     required this.followUpRepository,
     required this.messageRepository,
     required this.templateRepository,
+    required this.attendanceRepository,
     required this.auth,
   }) {
     // The client needs the controller and the controller needs the client, so
@@ -78,6 +80,7 @@ class AppDependencies {
       followUpRepository: FollowUpRepository(api: api),
       messageRepository: MessageRepository(api: api),
       templateRepository: TemplateRepository(api: api),
+      attendanceRepository: AttendanceRepository(api: api),
       auth: AuthController(repository: authRepository),
     );
   }
@@ -95,6 +98,7 @@ class AppDependencies {
   final FollowUpRepository followUpRepository;
   final MessageRepository messageRepository;
   final TemplateRepository templateRepository;
+  final AttendanceRepository attendanceRepository;
   final AuthController auth;
 
   Future<void> dispose() async {

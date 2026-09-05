@@ -7,6 +7,7 @@ import 'package:marketing_crm_mobile/core/offline/outbox_flusher.dart';
 import 'package:marketing_crm_mobile/core/storage/key_value_store.dart';
 import 'package:marketing_crm_mobile/core/storage/token_store.dart';
 import 'package:marketing_crm_mobile/core/telephony/phone_dialer.dart';
+import 'package:marketing_crm_mobile/repositories/attendance_repository.dart';
 import 'package:marketing_crm_mobile/repositories/auth_repository.dart';
 import 'package:marketing_crm_mobile/repositories/call_repository.dart';
 import 'package:marketing_crm_mobile/repositories/follow_up_repository.dart';
@@ -53,6 +54,7 @@ class Harness {
       followUpRepository: FollowUpRepository(api: client),
       messageRepository: MessageRepository(api: client),
       templateRepository: TemplateRepository(api: client),
+      attendanceRepository: AttendanceRepository(api: client),
       auth: AuthController(repository: authRepository),
     );
   }
