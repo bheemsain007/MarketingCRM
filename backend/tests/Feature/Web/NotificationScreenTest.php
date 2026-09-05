@@ -172,6 +172,53 @@ class NotificationScreenTest extends TestCase
     }
 
     // -----------------------------------------------------------------------
+    // The break toggle (FR-ATT-04) - lives in the same shell, for the same
+    // reason: a break is a state of the whole session, reachable from
+    // wherever a shift happens to be, not a section of the CRM.
+    // -----------------------------------------------------------------------
+
+    /**
+     * On a page that is not the notifications screen, same proof as the bell:
+     * the control lives in the shell, not on one view.
+     */
+    #[Test]
+    public function the_break_toggle_is_in_the_shell_on_every_page(): void
+    {
+        $telecaller = $this->user(RoleName::Telecaller);
+
+        foreach (['/dashboard', '/leads', '/account'] as $path) {
+            $this->actingAs($telecaller)
+                ->get($path)
+                ->assertOk()
+                ->assertSee('id="crm-break-toggle"', false)
+                ->assertSee('/api/v1/attendance/status', false);
+        }
+    }
+
+    /**
+     * Ships hidden (`d-none`) because a page reload has no way to know yet
+     * whether the caller even has an open session - the same reason the
+     * unread badge ships empty rather than flashing a stale number.
+     */
+    #[Test]
+    public function the_break_toggle_ships_hidden_until_status_answers(): void
+    {
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('id="crm-break-toggle" class="btn btn-sm btn-outline-secondary d-none"', false);
+    }
+
+    #[Test]
+    public function the_break_toggle_posts_to_the_break_endpoints(): void
+    {
+        $this->actingAs($this->user(RoleName::Telecaller))
+            ->get('/dashboard')
+            ->assertOk()
+            ->assertSee('/api/v1/attendance/breaks/', false);
+    }
+
+    // -----------------------------------------------------------------------
     // The contract the screen reads
     // -----------------------------------------------------------------------
 

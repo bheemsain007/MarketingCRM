@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\UserWorkSession;
 use App\Services\Attendance\AttendanceBreakService;
 use App\Services\Attendance\AttendancePingService;
 use App\Support\ApiResponse;
@@ -21,6 +22,27 @@ class AttendanceController extends Controller
         private readonly AttendancePingService $pings,
         private readonly AttendanceBreakService $breaks,
     ) {}
+
+    /**
+     * Whether the caller has an open session and is on a break right now.
+     *
+     * Nothing else answers this, so a page reload had no way to know which
+     * control to draw - a header toggle would flip to "Start break" on every
+     * refresh even mid-break without this.
+     */
+    public function status(Request $request): JsonResponse
+    {
+        $session = UserWorkSession::open()
+            ->where('user_id', $request->user()->id)
+            ->latest('started_at')
+            ->first();
+
+        return ApiResponse::success([
+            'has_open_session' => $session !== null,
+            'is_on_break' => $session?->isOnBreak() ?? false,
+            'break_started_at' => $session?->break_started_at?->toIso8601String(),
+        ]);
+    }
 
     public function ping(Request $request): JsonResponse
     {

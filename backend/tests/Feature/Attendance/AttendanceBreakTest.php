@@ -147,4 +147,65 @@ class AttendanceBreakTest extends TestCase
         $this->postJson('/api/v1/attendance/breaks/start')->assertStatus(401);
         $this->postJson('/api/v1/attendance/breaks/stop')->assertStatus(401);
     }
+
+    // -----------------------------------------------------------------------
+    // Status - what a page reload needs to know which control to draw
+    // -----------------------------------------------------------------------
+
+    #[Test]
+    public function status_reports_no_open_session_when_there_is_none(): void
+    {
+        $this->actingAsTelecaller();
+
+        $this->getJson('/api/v1/attendance/status')
+            ->assertOk()
+            ->assertJsonPath('data.has_open_session', false)
+            ->assertJsonPath('data.is_on_break', false);
+    }
+
+    #[Test]
+    public function status_reports_an_open_session_that_is_not_on_break(): void
+    {
+        $user = $this->actingAsTelecaller();
+        $this->openSession($user);
+
+        $this->getJson('/api/v1/attendance/status')
+            ->assertOk()
+            ->assertJsonPath('data.has_open_session', true)
+            ->assertJsonPath('data.is_on_break', false)
+            ->assertJsonPath('data.break_started_at', null);
+    }
+
+    #[Test]
+    public function status_reports_being_on_break_with_when_it_started(): void
+    {
+        $user = $this->actingAsTelecaller();
+        $session = $this->openSession($user, ['break_started_at' => now()->subMinutes(5)]);
+
+        $this->getJson('/api/v1/attendance/status')
+            ->assertOk()
+            ->assertJsonPath('data.has_open_session', true)
+            ->assertJsonPath('data.is_on_break', true)
+            ->assertJsonPath('data.break_started_at', $session->break_started_at->toIso8601String());
+    }
+
+    #[Test]
+    public function status_does_not_report_someone_elses_session(): void
+    {
+        $other = User::factory()->create();
+        $other->roles()->attach(Role::where('name', RoleName::Telecaller->value)->first());
+        $this->openSession($other->fresh());
+
+        $this->actingAsTelecaller();
+
+        $this->getJson('/api/v1/attendance/status')
+            ->assertOk()
+            ->assertJsonPath('data.has_open_session', false);
+    }
+
+    #[Test]
+    public function status_requires_authentication(): void
+    {
+        $this->getJson('/api/v1/attendance/status')->assertStatus(401);
+    }
 }

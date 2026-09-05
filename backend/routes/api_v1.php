@@ -98,6 +98,13 @@ Route::prefix('auth')->group(function () {
 | touch THIS one" - so normal auth is the whole gate.
 */
 Route::middleware(['auth:sanctum', 'throttle:api-standard'])->prefix('attendance')->group(function () {
+    // Read-only: whether the caller has an open session and is on a break -
+    // nothing else exposed this, so a page reload had no way to know which
+    // button to draw. GET, not folded into /auth/me, because it changes on a
+    // timescale (mid-shift) that has nothing to do with identity.
+    Route::get('/status', [AttendanceController::class, 'status'])
+        ->name('api.v1.attendance.status');
+
     // The client-side heartbeat (page_view signal): proves presence with no
     // lead action to hang a ping on.
     Route::post('/ping', [AttendanceController::class, 'ping'])

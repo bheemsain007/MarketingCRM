@@ -195,6 +195,21 @@
             <h1 class="h5 mb-0">@yield('title', 'CRM')</h1>
             <div class="d-flex align-items-center gap-3">
                 {{--
+                    Explicit break start/stop (FR-ATT-04). Lives in the shell
+                    for the same reason the bell does - a break is a state of
+                    the whole session, not a section of the CRM, and it needs
+                    to be reachable from wherever a shift happens to be when
+                    someone actually steps away. Hidden until /attendance/status
+                    answers, since a page reload otherwise has no way to know
+                    whether to offer "Take a break" or "End break" - starting a
+                    second break on top of one already running would silently
+                    discard when the first one actually began.
+                --}}
+                <button type="button" id="crm-break-toggle" class="btn btn-sm btn-outline-secondary d-none">
+                    <i class="bi bi-cup-hot me-1"></i><span id="crm-break-label">Take a break</span>
+                </button>
+
+                {{--
                     The bell is the ONLY entry point to the notifications screen
                     - there is deliberately no sidebar entry, because a list of
                     your own alerts is not a section of the CRM, it is a state
@@ -352,6 +367,52 @@ $(function () {
     window.crmRefreshBell = refresh;
 
     refresh();
+});
+</script>
+<script>
+/*
+ * Explicit break start/stop (FR-ATT-04).
+ *
+ * No open session (has_open_session: false) hides the control entirely rather
+ * than disabling it - a button that always 422s is worse than no button, and
+ * FR-ATT-01 opens a session at login, so this should be rare outside a
+ * genuinely stale/expired one.
+ */
+$(function () {
+    const toggle = $('#crm-break-toggle');
+    const label = $('#crm-break-label');
+    let onBreak = false;
+
+    function paint() {
+        toggle.toggleClass('btn-outline-secondary', !onBreak)
+            .toggleClass('btn-warning', onBreak);
+        label.text(onBreak ? 'End break' : 'Take a break');
+    }
+
+    $.getJSON('/api/v1/attendance/status')
+        .done(function (response) {
+            if (!response.data.has_open_session) return;
+
+            onBreak = response.data.is_on_break;
+            paint();
+            toggle.removeClass('d-none');
+        });
+        // Silent on failure, like the bell above - a missing toggle costs
+        // nothing an alert would fix, and the session-loss case is already
+        // handled by the global 401 handler.
+
+    toggle.on('click', function () {
+        toggle.prop('disabled', true);
+
+        $.post('/api/v1/attendance/breaks/' + (onBreak ? 'stop' : 'start'))
+            .done(function (response) {
+                onBreak = !onBreak;
+                paint();
+                CRM.alert(response.message, 'success');
+            })
+            .fail(function (xhr) { CRM.alert(CRM.errorFrom(xhr)); })
+            .always(function () { toggle.prop('disabled', false); });
+    });
 });
 </script>
 @stack('scripts')
