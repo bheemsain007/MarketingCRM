@@ -54,6 +54,14 @@ jobs:
           php-version: '8.2'
           extensions: mbstring, pdo_mysql, bcmath, intl
           coverage: xdebug
+          # `coverage: xdebug` loads Xdebug for every php/composer call in this
+          # job, not just the coverage step - and this repo already has one
+          # confirmed case (this same week, on the dev machine) of Xdebug's
+          # instrumentation overhead exhausting a default memory_limit during
+          # an otherwise-ordinary run. Composer's autoload-dump over ~120
+          # packages is exactly that kind of run. Uncapping it here is cheap
+          # insurance against the same failure mode showing up in CI.
+          ini-values: memory_limit=-1
 
       - name: Cache Composer packages
         uses: actions/cache@v4
