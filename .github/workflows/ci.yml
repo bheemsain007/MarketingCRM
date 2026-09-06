@@ -61,7 +61,13 @@ jobs:
           path: backend/vendor
           key: ${{ runner.os }}-composer-${{ hashFiles('backend/composer.lock') }}
 
+      # Without this, Composer's GitHub API calls (metadata + zipball for each
+      # of ~118 packages) are unauthenticated and share the runner's IP-wide
+      # 60-requests/hour limit - exactly what failed the first real run of
+      # this pipeline. The workflow's own token raises that to 5,000/hour.
       - name: Install dependencies
+        env:
+          COMPOSER_AUTH: '{"github-oauth":{"github.com":"${{ secrets.GITHUB_TOKEN }}"}}'
         run: composer install --prefer-dist --no-interaction --no-progress
 
       # SEC-OPS-01. Runs before the tests: a known-vulnerable dependency is

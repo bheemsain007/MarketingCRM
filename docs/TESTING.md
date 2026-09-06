@@ -644,3 +644,23 @@ throughput and response-time numbers rather than a browser.)*
 MODULE_STATUS's Phase 28 row is updated to reflect this precisely: browser E2E tooling is chosen, built
 and passing locally, and the load-test question now has a real answer; CI wiring is what keeps the phase
 from Done.
+
+### 10.6 A flaky window observed 2026-09-06 - machine load, not a code defect
+
+A full backend regression sweep (2026-09-06) re-ran this suite three times in a row on this same
+machine. Result: 12/12 passed once, and 3/12 failed on the other two runs - but a **different**
+combination of tests each time (`LeadCreationTest`, `LeadStatusTransitionTest`, and
+`DncRemovalModalTest` each failed on at least one run and passed clean on another), and every failure
+was a plain `TimeoutException` on Dusk's fixed 5-second wait, never a wrong-content assertion.  A real
+logic bug fails the same test at the same line every time; this did not.
+
+The machine had 30-37 concurrent `php.exe`/`chrome.exe`/`chromedriver.exe` processes at the time,
+entirely unrelated to this project - a periodic automated test-watcher cycling through several other
+local repos on this developer's machine. `SESSION_DRIVER=database` (matching production, §10.2) means
+every request's session read/write is a real MySQL round trip; under that much unrelated CPU/DB
+contention, a handful of round trips occasionally missed the 5-second window Dusk allows.
+
+This is recorded rather than silently retried away, in the same spirit as the load-test correction
+(LOAD_TEST_RESULTS.md §6): the finding is "this suite is sensitive to heavy concurrent load on a shared
+dev machine," not "these three journeys are broken." Re-run on a quiet machine before treating a Dusk
+failure in this suite as a real regression.

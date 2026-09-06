@@ -121,12 +121,6 @@ parameters:
 			path: app/Http/Controllers/Api/V1/LeadNoteController.php
 
 		-
-			message: '#^Parameter \#1 \$query of method App\\Support\\QueryOptions\:\:applyTo\(\) expects Illuminate\\Database\\Eloquent\\Builder, Illuminate\\Database\\Eloquent\\Relations\\HasMany given\.$#'
-			identifier: argument.type
-			count: 1
-			path: app/Http/Controllers/Api/V1/MessageController.php
-
-		-
 			message: '#^Parameter \#1 \$callback of method Illuminate\\Database\\Eloquent\\Collection\<int,Illuminate\\Database\\Eloquent\\Model\>\:\:map\(\) expects callable\(Illuminate\\Database\\Eloquent\\Model, int\)\: array\<string, mixed\>, Closure\(App\\Models\\Quotation\)\: array\<string, mixed\> given\.$#'
 			identifier: argument.type
 			count: 1
@@ -153,8 +147,14 @@ parameters:
 		-
 			message: '#^Cannot call method toIso8601String\(\) on string\.$#'
 			identifier: method.nonObject
-			count: 3
+			count: 2
 			path: app/Http/Resources/LeadResource.php
+
+		-
+			message: '#^Expression on left side of \?\? is not nullable\.$#'
+			identifier: nullCoalesce.expr
+			count: 1
+			path: app/Models/Concerns/HasRolesAndPermissions.php
 
 		-
 			message: '#^Cannot call method diffInDays\(\) on string\.$#'
@@ -185,12 +185,6 @@ parameters:
 			identifier: nullsafe.neverNull
 			count: 1
 			path: app/Services/Auth/AuthService.php
-
-		-
-			message: '#^Cannot call method gt\(\) on string\.$#'
-			identifier: method.nonObject
-			count: 1
-			path: app/Services/Calls/AutoDialerService.php
 
 		-
 			message: '#^Method App\\Services\\Calls\\AutoDialerService\:\:nextPendingItem\(\) should return App\\Models\\AutoDialerQueueItem\|null but returns Illuminate\\Database\\Eloquent\\Model\|null\.$#'
