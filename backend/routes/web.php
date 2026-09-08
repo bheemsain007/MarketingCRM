@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Web\DashboardController;
 use App\Http\Controllers\Web\LoginController;
+use App\Http\Controllers\Web\MetaConnectController;
 use App\Http\Controllers\Web\PageController;
 use App\Http\Controllers\Web\PasswordResetController;
 use App\Http\Controllers\Web\TwoFactorController;
@@ -152,6 +153,22 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/integrations', [PageController::class, 'integrations'])
         ->middleware('permission:settings.manage')->name('web.integrations');
+
+    /*
+     * "Continue with Facebook" (T-35). Gated on credentials.manage, same as
+     * every provider secret this ends up writing (SEC-AUTHZ-06) - Super Admin
+     * only. Lives here, not under api/v1, for the same reason LoginController
+     * does: an OAuth redirect is a browser-navigation flow tied to the web
+     * session, not a resource the API's JSON contract has any use for.
+     */
+    Route::prefix('integrations/meta')->name('web.integrations.meta.')
+        ->middleware('permission:credentials.manage')->group(function () {
+            Route::get('/connect', [MetaConnectController::class, 'connect'])->name('connect');
+            Route::get('/callback', [MetaConnectController::class, 'callback'])->name('callback');
+            Route::get('/pages', [MetaConnectController::class, 'pages'])->name('pages');
+            Route::post('/select-page', [MetaConnectController::class, 'selectPage'])->name('select-page');
+            Route::post('/disconnect', [MetaConnectController::class, 'disconnect'])->name('disconnect');
+        });
 
     Route::get('/dnc', [PageController::class, 'dnc'])
         ->middleware('permission:dnc.view')->name('web.dnc');
