@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/di/dependencies.dart';
 import '../models/lead.dart';
 import '../state/lead_list_controller.dart';
+import '../theme/status_colors.dart';
+import '../widgets/animations.dart';
 import '../widgets/state_views.dart';
 import 'lead_detail_screen.dart';
 
@@ -121,8 +123,9 @@ class _LeadListScreenState extends State<LeadListScreen> {
         key: LeadListScreen.listKey,
         controller: _scroll,
         physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
         itemCount: leads.length + (controller.hasMore ? 1 : 0),
-        separatorBuilder: (_, _) => const Divider(height: 1),
+        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (context, index) {
           if (index >= leads.length) {
             return const Padding(
@@ -131,7 +134,10 @@ class _LeadListScreenState extends State<LeadListScreen> {
             );
           }
 
-          return _LeadTile(lead: leads[index], onReturn: controller.refresh);
+          return FadeSlideIn.staggered(
+            index: index,
+            child: _LeadTile(lead: leads[index], onReturn: controller.refresh),
+          );
         },
       ),
     );
@@ -146,21 +152,37 @@ class _LeadTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      leading: CircleAvatar(child: Text(_initial(lead.name))),
-      title: Text(lead.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(lead.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: StatusChip(label: lead.statusLabel),
-      onTap: () async {
-        await Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => LeadDetailScreen(leadId: lead.id)),
-        );
+    final (background, foreground) = StatusColors.avatar(context, lead.name);
 
-        // A call recorded on the detail screen changes the lead's
-        // last-contacted date and can change its status, so the list is stale
-        // the moment we come back.
-        await onReturn();
-      },
+    return Card(
+      child: PressableScale(
+        child: ListTile(
+          leading: Hero(
+            tag: 'lead-avatar-${lead.id}',
+            child: CircleAvatar(
+              backgroundColor: background,
+              foregroundColor: foreground,
+              child: Text(_initial(lead.name)),
+            ),
+          ),
+          title: Text(lead.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(lead.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: StatusChip(
+            label: lead.statusLabel,
+            colors: StatusColors.leadStatus(context, lead.status),
+          ),
+          onTap: () async {
+            await Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => LeadDetailScreen(leadId: lead.id)),
+            );
+
+            // A call recorded on the detail screen changes the lead's
+            // last-contacted date and can change its status, so the list is
+            // stale the moment we come back.
+            await onReturn();
+          },
+        ),
+      ),
     );
   }
 

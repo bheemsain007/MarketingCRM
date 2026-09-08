@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/call.dart';
+import '../widgets/animations.dart';
 
 /// What the telecaller reports after the handset is done.
 class CallOutcomeDraft {
@@ -129,6 +130,7 @@ class _CallOutcomeSheetState extends State<CallOutcomeSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: FadeSlideIn(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -217,6 +219,7 @@ class _CallOutcomeSheetState extends State<CallOutcomeSheet> {
               child: const Text('Save outcome'),
             ),
           ],
+        ),
         ),
       ),
     );

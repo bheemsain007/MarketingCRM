@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/di/dependencies.dart';
 import '../models/outbound_message.dart';
 import '../models/template.dart';
+import '../theme/status_colors.dart';
+import '../widgets/animations.dart';
 
 /// What the telecaller wants to say, before the server is asked whether they may.
 class MessageDraft {
@@ -199,6 +201,7 @@ class _MessageComposeSheetState extends State<MessageComposeSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: FadeSlideIn(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -232,13 +235,16 @@ class _MessageComposeSheetState extends State<MessageComposeSheet> {
                 TextButton.icon(
                   key: MessageComposeSheet.templateButtonKey,
                   onPressed: _applyingTemplate ? null : _pickTemplate,
-                  icon: _applyingTemplate
-                      ? const SizedBox(
-                          height: 16,
-                          width: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.description_outlined, size: 18),
+                  icon: AppSwitcher(
+                    child: _applyingTemplate
+                        ? const SizedBox(
+                            key: ValueKey('busy'),
+                            height: 16,
+                            width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.description_outlined, size: 18, key: ValueKey('idle')),
+                  ),
                   label: const Text('Template'),
                 ),
               ],
@@ -294,8 +300,13 @@ class _MessageComposeSheetState extends State<MessageComposeSheet> {
               onPressed: _submit,
               icon: const Icon(Icons.send_outlined),
               label: Text('Send ${widget.channel.label}'),
+              style: FilledButton.styleFrom(
+                backgroundColor: StatusColors.channel(context, widget.channel.value),
+                foregroundColor: Colors.white,
+              ),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -343,15 +354,18 @@ class _TemplatePickerSheet extends StatelessWidget {
                   itemBuilder: (context, index) {
                     final template = templates[index];
 
-                    return ListTile(
-                      key: MessageComposeSheet.templateOptionKey(template.id),
-                      title: Text(template.name),
-                      subtitle: Text(
-                        template.body,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    return FadeSlideIn.staggered(
+                      index: index,
+                      child: ListTile(
+                        key: MessageComposeSheet.templateOptionKey(template.id),
+                        title: Text(template.name),
+                        subtitle: Text(
+                          template.body,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        onTap: () => Navigator.of(context).pop(template),
                       ),
-                      onTap: () => Navigator.of(context).pop(template),
                     );
                   },
                 ),

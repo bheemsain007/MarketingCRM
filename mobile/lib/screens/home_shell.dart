@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/api/api_exception.dart';
 import '../core/di/dependencies.dart';
+import '../widgets/animations.dart';
 import '../widgets/outbox_banner.dart';
 import 'follow_up_screen.dart';
 import 'lead_list_screen.dart';
@@ -146,7 +147,12 @@ class _HomeShellState extends State<HomeShell> {
             IconButton(
               key: HomeShell.breakToggleKey,
               tooltip: _isOnBreak ? 'End break' : 'Take a break',
-              icon: Icon(_isOnBreak ? Icons.play_circle_outline : Icons.free_breakfast_outlined),
+              icon: AppSwitcher(
+                child: Icon(
+                  _isOnBreak ? Icons.play_circle_outline : Icons.free_breakfast_outlined,
+                  key: ValueKey<bool>(_isOnBreak),
+                ),
+              ),
               onPressed: _breakBusy ? null : _toggleBreak,
             ),
           IconButton(

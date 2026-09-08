@@ -4,6 +4,8 @@ import 'core/di/dependencies.dart';
 import 'screens/home_shell.dart';
 import 'screens/login_screen.dart';
 import 'state/auth_controller.dart';
+import 'theme/app_theme.dart';
+import 'widgets/animations.dart';
 
 /// The root.
 ///
@@ -35,21 +37,27 @@ class _CrmAppState extends State<CrmApp> {
       child: MaterialApp(
         title: 'Marketing CRM',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1D4ED8)),
-          useMaterial3: true,
-        ),
+        theme: AppTheme.light,
+        darkTheme: AppTheme.dark,
+        themeMode: ThemeMode.dark,
         home: ListenableBuilder(
           listenable: widget.dependencies.auth,
           builder: (context, _) {
-            switch (widget.dependencies.auth.status) {
-              case AuthStatus.checking:
-                return const _SplashScreen();
-              case AuthStatus.signedOut:
-                return const LoginScreen();
-              case AuthStatus.signedIn:
-                return const HomeShell();
-            }
+            final child = switch (widget.dependencies.auth.status) {
+              AuthStatus.checking => const _SplashScreen(),
+              AuthStatus.signedOut => const LoginScreen(),
+              AuthStatus.signedIn => const HomeShell(),
+            };
+
+            // Keyed by status so AnimatedSwitcher treats sign-in/sign-out as a
+            // real content change rather than a rebuild of the same widget -
+            // otherwise it has nothing to cross-fade between.
+            return AnimatedSwitcher(
+              duration: const Duration(milliseconds: 280),
+              switchInCurve: Curves.easeOut,
+              switchOutCurve: Curves.easeIn,
+              child: KeyedSubtree(key: ValueKey(widget.dependencies.auth.status), child: child),
+            );
           },
         ),
       ),
@@ -62,8 +70,21 @@ class _SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      body: Center(
+        child: FadeSlideIn(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.headset_mic_outlined, size: 48, color: theme.colorScheme.primary),
+              const SizedBox(height: 20),
+              const CircularProgressIndicator(),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

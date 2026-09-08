@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'animations.dart';
+
 /// Full-panel failure state.
 ///
 /// The message is always the server's own. This app never rewrites a refusal
@@ -19,21 +21,23 @@ class ErrorView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(Icons.cloud_off_outlined, size: 48, color: theme.colorScheme.outline),
-            const SizedBox(height: 16),
-            Text(message, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
-            if (onRetry != null) ...<Widget>[
+        child: FadeSlideIn(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(Icons.cloud_off_outlined, size: 48, color: theme.colorScheme.outline),
               const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Try again'),
-              ),
+              Text(message, textAlign: TextAlign.center, style: theme.textTheme.bodyMedium),
+              if (onRetry != null) ...<Widget>[
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Try again'),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -53,17 +57,19 @@ class EmptyView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(icon, size: 48, color: theme.colorScheme.outline),
-            const SizedBox(height: 16),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-            ),
-          ],
+        child: FadeSlideIn(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(icon, size: 48, color: theme.colorScheme.outline),
+              const SizedBox(height: 16),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -72,24 +78,34 @@ class EmptyView extends StatelessWidget {
 
 /// A status pill. Always fed a label the server produced (`status_label`), not
 /// one derived from the raw enum value here.
+///
+/// Colour is a separate question from the label: [colors] paints a meaning
+/// (`StatusColors.leadStatus`, `.leadTemperature`) onto whatever text the
+/// server sent, and never substitutes for it. Falls back to [tone] — a
+/// smaller, fixed vocabulary — when a screen has no per-value mapping to give.
 class StatusChip extends StatelessWidget {
-  const StatusChip({required this.label, this.icon, this.tone = ChipTone.neutral, super.key});
+  const StatusChip({required this.label, this.icon, this.tone = ChipTone.neutral, this.colors, super.key});
 
   final String label;
   final IconData? icon;
   final ChipTone tone;
 
+  /// (background, foreground) — overrides [tone] when given.
+  final (Color, Color)? colors;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final (Color background, Color foreground) = switch (tone) {
-      ChipTone.neutral => (theme.colorScheme.surfaceContainerHighest, theme.colorScheme.onSurfaceVariant),
-      ChipTone.positive => (theme.colorScheme.primaryContainer, theme.colorScheme.onPrimaryContainer),
-      ChipTone.warning => (theme.colorScheme.tertiaryContainer, theme.colorScheme.onTertiaryContainer),
-      ChipTone.danger => (theme.colorScheme.errorContainer, theme.colorScheme.onErrorContainer),
-    };
+    final (Color background, Color foreground) = colors ??
+        switch (tone) {
+          ChipTone.neutral => (theme.colorScheme.surfaceContainerHighest, theme.colorScheme.onSurfaceVariant),
+          ChipTone.positive => (theme.colorScheme.primaryContainer, theme.colorScheme.onPrimaryContainer),
+          ChipTone.warning => (theme.colorScheme.tertiaryContainer, theme.colorScheme.onTertiaryContainer),
+          ChipTone.danger => (theme.colorScheme.errorContainer, theme.colorScheme.onErrorContainer),
+        };
 
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: background, borderRadius: BorderRadius.circular(999)),
       child: Row(

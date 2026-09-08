@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../core/di/dependencies.dart';
 import '../models/outbound_message.dart';
 import '../models/template.dart';
+import '../theme/status_colors.dart';
+import '../widgets/animations.dart';
 
 /// Browse, and — for whoever holds `templates.manage` — author message
 /// templates (FR-COMM-02).
@@ -175,56 +177,71 @@ class _TemplateManagementScreenState extends State<TemplateManagementScreen> {
           if (templates.isEmpty) {
             return Center(
               key: TemplateManagementScreen.emptyKey,
-              child: Text(
-                _showInactive ? 'No templates yet.' : 'No active templates yet.',
-                style: Theme.of(context).textTheme.bodyMedium,
+              child: FadeSlideIn(
+                child: Text(
+                  _showInactive ? 'No templates yet.' : 'No active templates yet.',
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
               ),
             );
           }
 
           return ListView.separated(
             key: TemplateManagementScreen.listKey,
-            padding: const EdgeInsets.only(bottom: 96),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 96),
             itemCount: templates.length,
-            separatorBuilder: (_, _) => const Divider(height: 1),
+            separatorBuilder: (_, _) => const SizedBox(height: 8),
             itemBuilder: (context, index) {
               final template = templates[index];
 
-              return ListTile(
-                key: TemplateManagementScreen.tileKey(template.id),
-                title: Text(template.name),
-                subtitle: Text(
-                  '${template.channelLabel} · ${template.body}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                leading: CircleAvatar(
-                  backgroundColor: template.isActive
-                      ? Theme.of(context).colorScheme.primaryContainer
-                      : Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: Icon(
-                    template.isActive ? Icons.description_outlined : Icons.archive_outlined,
-                    size: 18,
+              return FadeSlideIn.staggered(
+                index: index,
+                child: Card(
+                  child: PressableScale(
+                    child: ListTile(
+                      key: TemplateManagementScreen.tileKey(template.id),
+                      title: Text(template.name),
+                      subtitle: Text(
+                        '${template.channelLabel} · ${template.body}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      leading: AppSwitcher(
+                        child: CircleAvatar(
+                          key: ValueKey<bool>(template.isActive),
+                          backgroundColor: template.isActive
+                              ? StatusColors.channel(context, template.channel).withValues(alpha: 0.16)
+                              : Theme.of(context).colorScheme.surfaceContainerHighest,
+                          child: Icon(
+                            template.isActive ? Icons.description_outlined : Icons.archive_outlined,
+                            size: 18,
+                            color: template.isActive
+                                ? StatusColors.channel(context, template.channel)
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      trailing: canManage
+                          ? (template.isActive
+                              ? IconButton(
+                                  key: TemplateManagementScreen.deactivateKey(template.id),
+                                  tooltip: 'Deactivate',
+                                  icon: const Icon(Icons.archive_outlined),
+                                  onPressed: () => _deactivate(template),
+                                )
+                              : IconButton(
+                                  key: TemplateManagementScreen.restoreKey(template.id),
+                                  tooltip: 'Restore',
+                                  icon: const Icon(Icons.unarchive_outlined),
+                                  onPressed: () => _restore(template),
+                                ))
+                          : null,
+                      onTap: canManage
+                          ? () => _openForm(editing: template)
+                          : () => _showReadOnly(context, template),
+                    ),
                   ),
                 ),
-                trailing: canManage
-                    ? (template.isActive
-                        ? IconButton(
-                            key: TemplateManagementScreen.deactivateKey(template.id),
-                            tooltip: 'Deactivate',
-                            icon: const Icon(Icons.archive_outlined),
-                            onPressed: () => _deactivate(template),
-                          )
-                        : IconButton(
-                            key: TemplateManagementScreen.restoreKey(template.id),
-                            tooltip: 'Restore',
-                            icon: const Icon(Icons.unarchive_outlined),
-                            onPressed: () => _restore(template),
-                          ))
-                    : null,
-                onTap: canManage
-                    ? () => _openForm(editing: template)
-                    : () => _showReadOnly(context, template),
               );
             },
           );
@@ -240,21 +257,23 @@ class _TemplateManagementScreenState extends State<TemplateManagementScreen> {
       builder: (context) => SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(template.name, style: Theme.of(context).textTheme.titleMedium),
-              Text(template.channelLabel, style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(height: 12),
-              if (template.subject != null) ...<Widget>[
-                Text('Subject', style: Theme.of(context).textTheme.labelSmall),
-                Text(template.subject!),
-                const SizedBox(height: 8),
+          child: FadeSlideIn(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(template.name, style: Theme.of(context).textTheme.titleMedium),
+                Text(template.channelLabel, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 12),
+                if (template.subject != null) ...<Widget>[
+                  Text('Subject', style: Theme.of(context).textTheme.labelSmall),
+                  Text(template.subject!),
+                  const SizedBox(height: 8),
+                ],
+                Text('Message', style: Theme.of(context).textTheme.labelSmall),
+                Text(template.body),
               ],
-              Text('Message', style: Theme.of(context).textTheme.labelSmall),
-              Text(template.body),
-            ],
+            ),
           ),
         ),
       ),
@@ -330,6 +349,7 @@ class _TemplateFormSheetState extends State<_TemplateFormSheet> {
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        child: FadeSlideIn(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -392,6 +412,7 @@ class _TemplateFormSheetState extends State<_TemplateFormSheet> {
               child: Text(isEditing ? 'Save changes' : 'Create template'),
             ),
           ],
+        ),
         ),
       ),
     );

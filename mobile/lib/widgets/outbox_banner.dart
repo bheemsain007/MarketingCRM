@@ -24,39 +24,43 @@ class OutboxBanner extends StatelessWidget {
       builder: (context, _) {
         final pending = deps.outbox.pendingCount;
         final failed = deps.outbox.failedCount;
-
-        if (pending == 0 && failed == 0) {
-          return const SizedBox.shrink();
-        }
+        final visible = pending > 0 || failed > 0;
 
         final isProblem = failed > 0;
         final background = isProblem ? theme.colorScheme.errorContainer : theme.colorScheme.secondaryContainer;
         final foreground = isProblem ? theme.colorScheme.onErrorContainer : theme.colorScheme.onSecondaryContainer;
 
-        return Material(
-          key: bannerKey,
-          color: background,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-            child: Row(
-              children: <Widget>[
-                Icon(isProblem ? Icons.warning_amber_outlined : Icons.cloud_upload_outlined,
-                    size: 20, color: foreground),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _describe(pending, failed),
-                    style: theme.textTheme.bodySmall?.copyWith(color: foreground),
+        return AnimatedSize(
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+          alignment: Alignment.topCenter,
+          child: !visible
+              ? const SizedBox(width: double.infinity)
+              : Material(
+                  key: bannerKey,
+                  color: background,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                    child: Row(
+                      children: <Widget>[
+                        Icon(isProblem ? Icons.warning_amber_outlined : Icons.cloud_upload_outlined,
+                            size: 20, color: foreground),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _describe(pending, failed),
+                            style: theme.textTheme.bodySmall?.copyWith(color: foreground),
+                          ),
+                        ),
+                        TextButton(
+                          key: retryButtonKey,
+                          onPressed: () => deps.flusher.flush(),
+                          child: Text('Send now', style: TextStyle(color: foreground)),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                TextButton(
-                  key: retryButtonKey,
-                  onPressed: () => deps.flusher.flush(),
-                  child: Text('Send now', style: TextStyle(color: foreground)),
-                ),
-              ],
-            ),
-          ),
         );
       },
     );

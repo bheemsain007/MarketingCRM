@@ -6,6 +6,8 @@ import '../models/call.dart';
 import '../models/callability.dart';
 import '../models/lead.dart';
 import '../models/outbound_message.dart';
+import '../theme/status_colors.dart';
+import '../widgets/animations.dart';
 import '../widgets/state_views.dart';
 import 'call_outcome_sheet.dart';
 import 'message_compose_sheet.dart';
@@ -361,33 +363,38 @@ class _LeadDetailScreenState extends State<LeadDetailScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: <Widget>[
-          _LeadSummary(lead: lead),
+          FadeSlideIn(child: _LeadSummary(lead: lead)),
           const SizedBox(height: 16),
-          _ContactActions(
-            lead: lead,
-            callability: _callability,
-            busy: _working,
-            onCall: _startCall,
-            onSend: _sendMessage,
+          FadeSlideIn.staggered(
+            index: 1,
+            child: _ContactActions(
+              lead: lead,
+              callability: _callability,
+              busy: _working,
+              onCall: _startCall,
+              onSend: _sendMessage,
+            ),
           ),
           const SizedBox(height: 24),
           Text('Call history', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          if (_calls.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: EmptyView(message: 'No calls logged for this lead yet.', icon: Icons.call_outlined),
-            )
-          else
-            Column(
-              key: LeadDetailScreen.historyKey,
-              children: _calls
-                  .map((call) => _CallTile(
-                        call: call,
-                        onRecordOutcome: call.isPending ? () => _collectOutcome(call, lead) : null,
-                      ))
-                  .toList(growable: false),
-            ),
+          FadeSlideIn.staggered(
+            index: 2,
+            child: _calls.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: EmptyView(message: 'No calls logged for this lead yet.', icon: Icons.call_outlined),
+                  )
+                : Column(
+                    key: LeadDetailScreen.historyKey,
+                    children: _calls
+                        .map((call) => _CallTile(
+                              call: call,
+                              onRecordOutcome: call.isPending ? () => _collectOutcome(call, lead) : null,
+                            ))
+                        .toList(growable: false),
+                  ),
+          ),
         ],
       ),
     );
@@ -402,6 +409,7 @@ class _LeadSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final (avatarBackground, avatarForeground) = StatusColors.avatar(context, lead.name);
 
     return Card(
       margin: EdgeInsets.zero,
@@ -412,8 +420,20 @@ class _LeadSummary extends StatelessWidget {
           children: <Widget>[
             Row(
               children: <Widget>[
+                Hero(
+                  tag: 'lead-avatar-${lead.id}',
+                  child: CircleAvatar(
+                    backgroundColor: avatarBackground,
+                    foregroundColor: avatarForeground,
+                    child: Text(lead.name.trim().isEmpty ? '?' : lead.name.trim().substring(0, 1).toUpperCase()),
+                  ),
+                ),
+                const SizedBox(width: 12),
                 Expanded(child: Text(lead.name, style: theme.textTheme.titleLarge)),
-                StatusChip(label: lead.statusLabel, tone: ChipTone.positive),
+                StatusChip(
+                  label: lead.statusLabel,
+                  colors: StatusColors.leadStatus(context, lead.status),
+                ),
               ],
             ),
             if (lead.company != null) ...<Widget>[
@@ -445,7 +465,11 @@ class _LeadSummary extends StatelessWidget {
               runSpacing: 8,
               children: <Widget>[
                 if (lead.temperature.isNotEmpty)
-                  StatusChip(label: lead.temperature, icon: Icons.thermostat_outlined),
+                  StatusChip(
+                    label: lead.temperature,
+                    icon: Icons.thermostat_outlined,
+                    colors: StatusColors.leadTemperature(context, lead.temperature),
+                  ),
                 StatusChip(label: 'Score ${lead.score}', icon: Icons.trending_up),
                 // Rendered because the API sends it, and labelled as a flag
                 // rather than as a verdict — the callability endpoint is the
@@ -578,14 +602,18 @@ class _ChannelButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final accent = StatusColors.channel(context, channel.value);
+
     return OutlinedButton.icon(
       key: LeadDetailScreen.messageButtonKey(channel),
       onPressed: busy ? null : () => onSend(channel),
       icon: Icon(icon, size: 18),
       label: Text(channel.label, maxLines: 1, overflow: TextOverflow.ellipsis),
       style: OutlinedButton.styleFrom(
+        foregroundColor: accent,
         minimumSize: const Size.fromHeight(44),
         padding: const EdgeInsets.symmetric(horizontal: 8),
+        side: BorderSide(color: accent.withValues(alpha: 0.4)),
       ),
     );
   }
@@ -628,6 +656,15 @@ class _CallAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return AppSwitcher(
+      child: KeyedSubtree(
+        key: ValueKey<bool>(callability.callable),
+        child: _buildAction(context),
+      ),
+    );
+  }
+
+  Widget _buildAction(BuildContext context) {
     final theme = Theme.of(context);
 
     if (!callability.callable) {
@@ -671,9 +708,16 @@ class _CallAction extends StatelessWidget {
     return FilledButton.icon(
       key: LeadDetailScreen.callButtonKey,
       onPressed: busy ? null : onCall,
-      icon: busy
-          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
-          : const Icon(Icons.call),
+      icon: AppSwitcher(
+        child: busy
+            ? const SizedBox(
+                key: ValueKey('busy'),
+                height: 18,
+                width: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.call, key: ValueKey('idle')),
+      ),
       label: Text(busy ? 'Starting call…' : 'Call this lead'),
       style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
     );

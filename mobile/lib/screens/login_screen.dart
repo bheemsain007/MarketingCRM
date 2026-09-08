@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/di/dependencies.dart';
 import '../state/auth_controller.dart';
+import '../widgets/animations.dart';
 
 /// `POST /auth/login`.
 ///
@@ -62,14 +63,24 @@ class _LoginScreenState extends State<LoginScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
-                  child: Form(
+                  child: FadeSlideIn(
+                    child: Form(
                     key: _formKey,
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Icon(Icons.headset_mic_outlined, size: 56, color: theme.colorScheme.primary),
-                        const SizedBox(height: 16),
+                        Container(
+                          width: 88,
+                          height: 88,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primaryContainer,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.headset_mic_outlined, size: 40, color: theme.colorScheme.onPrimaryContainer),
+                        ),
+                        const SizedBox(height: 20),
                         Text(
                           'Marketing CRM',
                           textAlign: TextAlign.center,
@@ -122,21 +133,34 @@ class _LoginScreenState extends State<LoginScreen> {
                           validator: (value) =>
                               (value == null || value.isEmpty) ? 'Enter your password.' : null,
                         ),
-                        if (auth.errorMessage != null) ...<Widget>[
-                          const SizedBox(height: 16),
-                          _ErrorBanner(key: LoginScreen.errorKey, message: auth.errorMessage!),
-                        ],
+                        AnimatedSize(
+                          duration: AppSwitcher.duration,
+                          curve: Curves.easeOut,
+                          alignment: Alignment.topCenter,
+                          child: auth.errorMessage == null
+                              ? const SizedBox(width: double.infinity)
+                              : Padding(
+                                  padding: const EdgeInsets.only(top: 16),
+                                  child: _ErrorBanner(
+                                    key: LoginScreen.errorKey,
+                                    message: auth.errorMessage!,
+                                  ),
+                                ),
+                        ),
                         const SizedBox(height: 24),
                         FilledButton(
                           key: LoginScreen.submitButtonKey,
                           onPressed: auth.busy ? null : () => _submit(auth),
-                          child: auth.busy
-                              ? const SizedBox(
-                                  height: 20,
-                                  width: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Text('Sign in'),
+                          child: AppSwitcher(
+                            child: auth.busy
+                                ? const SizedBox(
+                                    key: ValueKey('busy'),
+                                    height: 20,
+                                    width: 20,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Text('Sign in', key: ValueKey('idle')),
+                          ),
                         ),
                         const SizedBox(height: 24),
                         Text(
@@ -148,6 +172,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                     ),
+                  ),
                   ),
                 ),
               ),
