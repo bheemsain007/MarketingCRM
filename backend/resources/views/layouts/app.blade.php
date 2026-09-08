@@ -145,6 +145,9 @@
     @endpermission
 
     @permission('settings.manage')
+    <a href="{{ route('web.integrations') }}" class="{{ request()->routeIs('web.integrations') ? 'active' : '' }}">
+        <i class="bi bi-plug me-2"></i>Integrations
+    </a>
     <a href="{{ route('web.settings') }}" class="{{ request()->routeIs('web.settings') ? 'active' : '' }}">
         <i class="bi bi-sliders me-2"></i>Settings
     </a>

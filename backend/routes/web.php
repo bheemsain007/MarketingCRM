@@ -150,6 +150,9 @@ Route::middleware('auth')->group(function () {
     Route::get('/settings', [PageController::class, 'settings'])
         ->middleware('permission:settings.manage')->name('web.settings');
 
+    Route::get('/integrations', [PageController::class, 'integrations'])
+        ->middleware('permission:settings.manage')->name('web.integrations');
+
     Route::get('/dnc', [PageController::class, 'dnc'])
         ->middleware('permission:dnc.view')->name('web.dnc');
 

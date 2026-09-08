@@ -297,6 +297,20 @@ class PageController extends Controller
         return view('settings.index');
     }
 
+    /**
+     * The provider-credential subset of Settings, as connect/manage cards.
+     *
+     * Same `/api/v1/settings` shell as `settings()` - this view just picks out
+     * the credential groups that are one recognisable "integration" (WhatsApp,
+     * Facebook Lead Ads, ...) and renders them as cards instead of a long form.
+     * `dnc` and `delivery` are left out: both are a single shared webhook
+     * secret spanning several channels, not a provider a card can name.
+     */
+    public function integrations(): View
+    {
+        return view('settings.integrations');
+    }
+
     public function products(): View
     {
         return view('products.index');
